@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model TaskJob {
+  id                   String   @id @default(uuid())
+  taskNo               String   @unique
+  model                String
+  state                String   @default("pending")
+  param                Json?
+  resultJson           Json?
+  callBackUrl          String?
+  progressCallBackUrl  String?
+  failCode             Int?
+  failMsg              String?
+  costTime             Int?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  completedAt          DateTime?
+}
+
+model ApiKey {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  name      String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+}
