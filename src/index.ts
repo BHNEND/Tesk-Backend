@@ -1,7 +1,9 @@
 import Fastify from "fastify";
 import { authMiddleware } from "./middleware/auth.js";
+import { adminAuthMiddleware } from "./middleware/adminAuth.js";
 import { setupRateLimit } from "./middleware/rateLimit.js";
 import { jobRoutes } from "./routes/jobs.js";
+import { adminRoutes } from "./routes/admin.js";
 import { startWorker } from "./workers/taskWorker.js";
 import { startTimeoutChecker } from "./services/timeoutChecker.js";
 import { env } from "./config/env.js";
@@ -16,11 +18,20 @@ app.get("/health", async () => {
 // Setup rate limiting
 await setupRateLimit(app);
 
-// Register job routes with auth
+// Public API routes (Bearer Token auth from ApiKey table)
 app.register(
   async (instance) => {
     instance.addHook("onRequest", authMiddleware);
     await jobRoutes(instance);
+  },
+  { prefix: "" }
+);
+
+// Admin routes (Admin API Key auth)
+app.register(
+  async (instance) => {
+    instance.addHook("onRequest", adminAuthMiddleware);
+    await adminRoutes(instance);
   },
   { prefix: "" }
 );
