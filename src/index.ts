@@ -1,11 +1,35 @@
 import Fastify from "fastify";
+import { authMiddleware } from "./middleware/auth.js";
+import { setupRateLimit } from "./middleware/rateLimit.js";
+import { jobRoutes } from "./routes/jobs.js";
+import { startWorker } from "./workers/taskWorker.js";
+import { startTimeoutChecker } from "./services/timeoutChecker.js";
 import { env } from "./config/env.js";
 
 const app = Fastify({ logger: true });
 
+// Health check (no auth)
 app.get("/health", async () => {
   return { status: "ok", timestamp: new Date().toISOString() };
 });
+
+// Setup rate limiting
+await setupRateLimit(app);
+
+// Register job routes with auth
+app.register(
+  async (instance) => {
+    instance.addHook("onRequest", authMiddleware);
+    await jobRoutes(instance);
+  },
+  { prefix: "" }
+);
+
+// Start BullMQ worker
+const worker = startWorker();
+
+// Start timeout checker
+startTimeoutChecker();
 
 const start = async () => {
   try {
