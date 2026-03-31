@@ -9,6 +9,7 @@
     "init-db": "prisma db push"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^10.3.0",
     "@prisma/client": "^6.19.2",
     "bullmq": "^5.71.1",
     "dotenv": "^17.3.1",
