@@ -7,7 +7,10 @@ export async function setupRateLimit(app: FastifyInstance) {
     max: 10,
     timeWindow: "1 second",
     keyGenerator: (request: FastifyRequest) => {
-      return request.apiKey || request.ip;
+      // Use API key from Authorization header if available, otherwise use IP
+      const authHeader = request.headers.authorization || "";
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+      return token || request.ip;
     },
     errorResponseBuilder: () => ({
       code: 429,

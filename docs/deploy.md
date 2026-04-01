@@ -17,7 +17,7 @@
 
 | 变量名 | 必填 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `PORT` | ❌ | `4000` | 服务监听端口 |
+| `PORT` | ❌ | `3000` | 服务监听端口 |
 | `DATABASE_URL` | ✅ | - | MySQL 连接字符串 |
 | `REDIS_URL` | ✅ | - | Redis 连接字符串 |
 | `ADMIN_API_KEY` | ✅ | `admin-secret-key-change-in-production` | 管理后台 API Key |
@@ -137,7 +137,7 @@ cp .env.example .env
 ```env
 DATABASE_URL="mysql://root:your_password@localhost:3306/tesk"
 REDIS_URL="redis://localhost:6379"
-PORT=4000
+PORT=3000
 ADMIN_API_KEY="your-secure-admin-key"
 ```
 
@@ -184,7 +184,7 @@ npm start
 ### 8. 验证服务
 
 ```bash
-curl http://localhost:4000/health
+curl http://localhost:3000/health
 ```
 
 ---
