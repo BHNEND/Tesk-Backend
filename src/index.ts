@@ -1,4 +1,7 @@
 import Fastify from "fastify";
+import fastifyStatic from "@fastify/static";
+import path from "path";
+import { fileURLToPath } from "url";
 import { authMiddleware } from "./middleware/auth.js";
 import { adminAuthMiddleware } from "./middleware/adminAuth.js";
 import { setupRateLimit } from "./middleware/rateLimit.js";
@@ -7,6 +10,8 @@ import { adminRoutes } from "./routes/admin.js";
 import { startWorker } from "./workers/taskWorker.js";
 import { startTimeoutChecker } from "./services/timeoutChecker.js";
 import { env } from "./config/env.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = Fastify({ logger: true });
 
@@ -35,6 +40,22 @@ app.register(
   },
   { prefix: "" }
 );
+
+// Serve admin frontend static files (must be registered last)
+const publicPath = path.join(__dirname, "..", "public");
+await app.register(fastifyStatic, {
+  root: publicPath,
+  prefix: "/admin/",
+  redirect: true,
+});
+
+// SPA fallback: serve index.html for all /admin/* paths not matched by static files
+app.setNotFoundHandler((request, reply) => {
+  if (request.url.startsWith("/admin")) {
+    return reply.sendFile("index.html", publicPath);
+  }
+  reply.status(404).send({ code: 404, msg: "Not Found" });
+});
 
 // Start BullMQ worker
 const worker = startWorker();
