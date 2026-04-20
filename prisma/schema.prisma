@@ -8,26 +8,65 @@ datasource db {
 }
 
 model TaskJob {
-  id                   String   @id @default(uuid())
-  taskNo               String   @unique
-  model                String
-  state                String   @default("pending")
-  param                Json?
-  resultJson           Json?
-  callBackUrl          String?
-  progressCallBackUrl  String?
-  failCode             Int?
-  failMsg              String?
-  costTime             Int?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-  completedAt          DateTime?
+  id                  String   @id @default(uuid()) @map("task_id")
+  apiKeyId            String?  @db.VarChar(100) // 关联 API Key 用于并发统计
+  upstreamTaskId      String?  @db.VarChar(100)
+  taskType            String   @default("model") @db.VarChar(20)
+  model               String?  @db.VarChar(100)
+  appid               String?  @db.VarChar(100)
+  state               String   @default("PENDING") @db.VarChar(20)
+  param               Json
+  resultJson          Json?
+  upstreamRequest     Json?    // 存储发送给上游(如 RunningHub)的真实请求信息用于调试
+  rawError            Json?    // 存储上游返回的原始错误 JSON，用于内部排查而不推给业务端
+  callBackUrl         String
+  progressCallBackUrl String?
+  failCode            String?  @db.VarChar(50)
+  failMsg             String?  @db.Text
+  costTime            Int      @default(0)
+  createTime          DateTime @default(now())
+  updateTime          DateTime @updatedAt
+  completeTime        DateTime?
+
+  @@index([state, createTime])
 }
 
 model ApiKey {
-  id        String   @id @default(uuid())
-  key       String   @unique
-  name      String
-  status    String   @default("active")
-  createdAt DateTime @default(now())
+  id               String   @id @default(uuid())
+  key              String   @unique
+  name             String
+  status           String   @default("active")
+  rpmLimit         Int      @default(60)    // 每分钟请求限制 (Requests Per Minute)
+  concurrencyLimit Int      @default(5)     // 最大并发任务数限制
+  ipWhitelist      String?  @db.Text        // IP 白名单，逗号分隔
+  createdAt        DateTime @default(now())
+}
+
+// 模型策略路由表
+model ModelStrategy {
+  id          String   @id @default(uuid())
+  modelName   String   @unique @db.VarChar(100)
+  handler     String   @db.VarChar(50)
+  name        String?  @db.VarChar(100)
+  description String?  @db.Text
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+}
+
+// 应用策略路由表
+model AppStrategy {
+  id          String   @id @default(uuid())
+  appId       String   @unique @db.VarChar(100) // RunningHub 真实的 App ID (URL 后面的数字)
+  handler     String   @db.VarChar(50)
+  name        String?  @db.VarChar(100)
+  description String?  @db.Text
+  config      Json?                    // 存储 {"nodeInfoList": [...]} 模板
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
 }

@@ -1,7 +1,0 @@
-node_modules
-dist
-.env
-.env.docker
-.git
-admin/node_modules
-admin/dist

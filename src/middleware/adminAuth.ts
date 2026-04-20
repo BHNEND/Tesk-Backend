@@ -5,6 +5,11 @@ export async function adminAuthMiddleware(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
+  // 1. 跳过 OPTIONS 请求和登录接口
+  if (request.method === "OPTIONS" || request.url.includes("/admin/login")) {
+    return;
+  }
+
   const authHeader = request.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return reply.status(401).send({

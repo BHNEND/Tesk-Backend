@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -13,7 +14,26 @@ import { env } from "./config/env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const app = Fastify({ logger: true });
+const app = Fastify({ 
+  logger: true,
+  trustProxy: true // 开启以获取真实客户端 IP (尤其是在 Nginx/CDN 之后)
+});
+
+// 注册 CORS 插件 (兼容性最强的配置)
+await app.register(cors, {
+  origin: (origin, cb) => {
+    // 允许所有来源，并专门处理浏览器的 null (file://) 来源
+    if (!origin || origin === "null") {
+      cb(null, true);
+      return;
+    }
+    cb(null, true);
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  preflight: true,
+  strictPreflight: false, // 关闭严格预检，对本地测试更友好
+});
 
 // Health check (no auth)
 app.get("/health", async () => {
@@ -38,7 +58,7 @@ app.register(
     instance.addHook("onRequest", adminAuthMiddleware);
     await adminRoutes(instance);
   },
-  { prefix: "" }
+  { prefix: "/admin" }
 );
 
 // Serve admin frontend static files (must be registered last)

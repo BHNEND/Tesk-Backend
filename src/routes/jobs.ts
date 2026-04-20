@@ -1,32 +1,51 @@
 import { FastifyInstance } from "fastify";
-import { createTask, getTaskInfo } from "../services/taskService.js";
+import { createTask, getTaskInfo, previewTask } from "../services/taskService.js";
 import { CreateTaskBody } from "../types/task.js";
 
 export async function jobRoutes(app: FastifyInstance) {
   app.post<{ Body: CreateTaskBody }>("/api/v1/jobs/createTask", async (request, reply) => {
-    const { model, callBackUrl, progressCallBackUrl, input } = request.body;
-
-    if (!model || !callBackUrl || !input?.prompt) {
+    const body = request.body;
+    
+    if (!body.callBackUrl || !body.input) {
       return reply.status(400).send({
         code: 400,
-        msg: "Missing required fields: model, callBackUrl, input.prompt",
+        msg: "Missing required fields: callBackUrl, input",
+      });
+    }
+    
+    if (body.type === 'app' && !body.appid) {
+      return reply.status(400).send({
+        code: 400,
+        msg: "Missing required fields for app task: appid",
+      });
+    }
+    
+    if ((body.type === 'model' || !body.type) && !(body as any).model) {
+      return reply.status(400).send({
+        code: 400,
+        msg: "Missing required fields for model task: model",
       });
     }
 
     try {
-      const { taskId } = await createTask({
-        model,
-        callBackUrl,
-        progressCallBackUrl,
-        input,
-      });
+      // 传递完整的 apiKeyData 供并发检查使用
+      const { taskId } = await createTask(body, (request as any).apiKeyData);
 
       return reply.send({ code: 200, msg: "success", data: { taskId } });
     } catch (err: any) {
-      return reply.status(500).send({
-        code: 500,
+      return reply.status(err.status || 500).send({
+        code: err.status || 500,
         msg: err.message || "Internal server error",
       });
+    }
+  });
+
+  app.post<{ Body: CreateTaskBody }>("/api/v1/jobs/previewTask", async (request, reply) => {
+    try {
+      const data = await previewTask(request.body);
+      return reply.send({ code: 200, msg: "success", data });
+    } catch (err: any) {
+      return reply.status(400).send({ code: 400, msg: err.message });
     }
   });
 

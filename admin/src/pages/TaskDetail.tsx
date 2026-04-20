@@ -21,7 +21,7 @@ export default function TaskDetail() {
   if (!task) return <div className="text-red-500">任务不存在</div>;
 
   const fields: [string, string][] = [
-    ['Task ID', 'task_id'],
+    ['Task ID', 'id'],
     ['模型', 'model'],
     ['状态', 'state'],
     ['回调 URL', 'callBackUrl'],
@@ -37,6 +37,7 @@ export default function TaskDetail() {
   const jsonFields: [string, string][] = [
     ['输入参数', 'param'],
     ['返回结果', 'resultJson'],
+    ['原始错误 (内部排查)', 'rawError'],
   ];
 
   return (

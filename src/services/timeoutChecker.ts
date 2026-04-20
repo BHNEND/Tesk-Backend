@@ -11,30 +11,30 @@ export function startTimeoutChecker() {
       const timedOutTasks = await prisma.taskJob.findMany({
         where: {
           state: "RUNNING",
-          createdAt: { lt: threshold },
+          updateTime: { lt: threshold },
         },
       });
 
       for (const task of timedOutTasks) {
-        console.warn(`⏰ Task ${task.taskNo} timed out (30 min), marking as FAILED`);
+        console.warn(`Task ${task.id} timed out (30 min), marking as FAILED`);
 
         await prisma.taskJob.update({
-          where: { taskNo: task.taskNo },
+          where: { id: task.id },
           data: {
             state: "FAILED",
-            failCode: 408,
+            failCode: "TIMEOUT",
             failMsg: "Timeout Exception",
-            completedAt: new Date(),
+            completeTime: new Date(),
           },
         });
 
         // Send webhook notification for timeout
-        await sendWebhookWithRetry(task.taskNo);
+        await sendWebhookWithRetry(task.id);
       }
     } catch (err) {
       console.error("Timeout checker error:", err);
     }
   }, CHECK_INTERVAL_MS);
 
-  console.log("⏰ Timeout checker started (30 min threshold, check every 60s)");
+  console.log("Timeout checker started (30 min threshold, check every 60s)");
 }
