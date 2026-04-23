@@ -27,7 +27,7 @@ async function createApp() {
     trustProxy: true,
     ajv: {
       customOptions: {
-        removeAdditional: "all",
+        removeAdditional: "failing",
         useDefaults: true,
       },
       plugins: [

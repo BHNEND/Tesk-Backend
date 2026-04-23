@@ -18,11 +18,11 @@ export function fillNodeInfoList(templateList: any[], input: StandardTaskInput):
   return newList.map((node: any) => {
     const desc = (node.description || "").trim().toLowerCase();
 
-    // 1. 基础字段精确映射
-    if (desc === "prompt") node.fieldValue = input.prompt;
-    else if (desc === "aspect_ratio") node.fieldValue = input.aspect_ratio;
-    else if (desc === "resolution") node.fieldValue = input.resolution;
-    else if (desc === "duration") node.fieldValue = input.duration;
+    // 1. 基础字段精确映射（仅覆盖，不传则保留模板默认值）
+    if (desc === "prompt" && input.prompt !== undefined) node.fieldValue = input.prompt;
+    else if (desc === "aspect_ratio" && input.aspect_ratio !== undefined) node.fieldValue = input.aspect_ratio;
+    else if (desc === "resolution" && input.resolution !== undefined) node.fieldValue = input.resolution;
+    else if (desc === "duration" && input.duration !== undefined) node.fieldValue = input.duration;
 
     // 2. 媒体数组索引映射 (如 image1, image2...)
     else if (desc.startsWith("image")) {
