@@ -17,13 +17,13 @@ export const defaultModelHandler: TaskHandler = {
     }
 
     return {
-      output: {
-        result_url: `https://example.com/results/${Date.now()}.png`,
+      resultUrls: [`https://example.com/results/${Date.now()}.png`],
+      metadata: {
         prompt: ctx.input?.prompt || "test prompt",
-      },
-      usage: {
-        input_tokens: 100,
-        output_tokens: 50,
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+        },
       },
     };
   },

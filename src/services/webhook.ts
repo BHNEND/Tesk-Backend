@@ -1,4 +1,4 @@
-import { getTaskInfo } from "./taskService.js";
+import { getTaskInfo, getPublicTaskInfo } from "./taskService.js";
 
 const WEBHOOK_TIMEOUT = 5000;
 const RETRY_DELAYS = [10000, 30000, 60000];
@@ -27,10 +27,12 @@ export async function sendWebhookWithRetry(taskId: string) {
   const taskInfo = await getTaskInfo(taskId);
   if (!taskInfo || !taskInfo.callBackUrl) return;
 
+  const publicInfo = await getPublicTaskInfo(taskId);
+
   const payload = {
     code: 200,
     msg: "success",
-    data: taskInfo,
+    data: publicInfo,
   };
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -46,6 +48,5 @@ export async function sendWebhookWithRetry(taskId: string) {
     }
   }
 
-  // Dead letter: log error but don't change task SUCCESS state
   console.error(`Webhook dead letter: failed after ${MAX_RETRIES} retries for ${taskId}`);
 }

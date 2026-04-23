@@ -4,20 +4,17 @@ import { ShieldCheck, ShieldAlert, Plus, Trash2, Cpu, Box, Edit2 } from 'lucide-
 
 interface Strategy {
   id: string;
-  identifier: string; // modelName or appId
+  identifier: string;       // modelName or appName
+  upstreamId: string;       // modelId or appId (上游真实 ID)
   handler: string;
-  name: string;
-  description: string;
+  remark: string;
   status: string;
   config?: any;
   createdAt: string;
 }
 
-const AVAILABLE_HANDLERS = [
-  { value: 'defaultModelHandler', label: 'Default Model Handler' },
-  { value: 'defaultAppHandler', label: 'Default App Handler' },
-  { value: 'runningHubHandler', label: 'RunningHub Handler' }
-];
+const MODEL_HANDLERS = ['defaultModelHandler', 'gptimage2', 'gptimageEdit', 'gptimage2k4k', 'yunwubanana', 'yunwubananapro', 'yunwubanana2'];
+const APP_HANDLERS = ['defaultAppHandler', 'runningHubHandler'];
 
 export default function StrategyManage() {
   const [tab, setTab] = useState<'model' | 'app'>('model');
@@ -28,9 +25,11 @@ export default function StrategyManage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [identifier, setIdentifier] = useState('');
-  const [handler, setHandler] = useState(AVAILABLE_HANDLERS[0].value);
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  const [upstreamId, setUpstreamId] = useState('');
+  const activeHandlers = tab === 'model' ? MODEL_HANDLERS : APP_HANDLERS;
+
+  const [handler, setHandler] = useState(MODEL_HANDLERS[0]);
+  const [remark, setRemark] = useState('');
   const [config, setConfig] = useState('');
 
   const fetch = () => {
@@ -40,10 +39,10 @@ export default function StrategyManage() {
       const list = data.data || [];
       setItems(list.map((item: any) => ({
         id: item.id,
-        identifier: tab === 'model' ? item.modelName : item.appId,
+        identifier: tab === 'model' ? item.modelName : item.appName,
+        upstreamId: tab === 'model' ? (item.modelId || '') : (item.appId || ''),
         handler: item.handler,
-        name: item.name || '',
-        description: item.description || '',
+        remark: item.remark || '',
         status: item.status,
         config: item.config,
         createdAt: item.createdAt
@@ -54,24 +53,25 @@ export default function StrategyManage() {
   useEffect(() => {
     fetch();
     resetForm();
+    setHandler((tab === 'model' ? MODEL_HANDLERS : APP_HANDLERS)[0]);
   }, [tab]);
 
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
     setIdentifier('');
-    setHandler(AVAILABLE_HANDLERS[0].value);
-    setName('');
-    setDescription('');
+    setUpstreamId('');
+    setHandler((tab === 'model' ? MODEL_HANDLERS : APP_HANDLERS)[0]);
+    setRemark('');
     setConfig('');
   };
 
   const handleEdit = (item: Strategy) => {
     setEditingId(item.id);
     setIdentifier(item.identifier);
+    setUpstreamId(item.upstreamId);
     setHandler(item.handler);
-    setName(item.name);
-    setDescription(item.description);
+    setRemark(item.remark);
     setConfig(item.config ? JSON.stringify(item.config, null, 2) : '');
     setShowForm(true);
   };
@@ -89,14 +89,21 @@ export default function StrategyManage() {
         }
       }
 
-      const payload = {
-        [tab === 'model' ? 'modelName' : 'appId']: identifier.trim(),
-        handler,
-        name: name.trim(),
-        description: description.trim(),
-        config: parsedConfig
-      };
-      
+      const payload = tab === 'model'
+        ? {
+            modelName: identifier.trim(),
+            modelId: upstreamId.trim() || null,
+            handler,
+            remark: remark.trim(),
+          }
+        : {
+            appName: identifier.trim(),
+            appId: upstreamId.trim() || null,
+            handler,
+            remark: remark.trim(),
+            config: parsedConfig,
+          };
+
       if (editingId) {
         if (tab === 'model') await updateModelStrategy(editingId, payload);
         else await updateAppStrategy(editingId, payload);
@@ -104,7 +111,7 @@ export default function StrategyManage() {
         if (tab === 'model') await createModelStrategy(payload);
         else await createAppStrategy(payload);
       }
-      
+
       resetForm();
       fetch();
     } catch (e: any) {
@@ -141,7 +148,7 @@ export default function StrategyManage() {
           <h1 className="text-2xl font-bold text-slate-900">策略管理</h1>
           <p className="text-sm text-slate-500 mt-1">动态注册并分配 App / Model 对应的底层处理逻辑</p>
         </div>
-        
+
         <div className="flex bg-slate-100 p-1 rounded-lg">
           <button
             onClick={() => setTab('model')}
@@ -184,13 +191,24 @@ export default function StrategyManage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                {tab === 'model' ? 'Model Name (模型标识)' : 'RunningHub App ID (数字 ID)'} *
+                {tab === 'model' ? 'Model Name (客户端标识)' : 'App Name (客户端标识)'} *
               </label>
               <input
                 autoFocus
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
-                placeholder={tab === 'model' ? "例如：video-gen-v2" : "例如：12345"}
+                placeholder={tab === 'model' ? "例如：gpt-image-2" : "例如：video-gen"}
+                className="w-full border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                {tab === 'model' ? 'Model ID (上游真实标识)' : 'App ID (上游真实 ID)'}
+              </label>
+              <input
+                value={upstreamId}
+                onChange={(e) => setUpstreamId(e.target.value)}
+                placeholder={tab === 'model' ? "例如：gpt-image-2-v1，留空则使用 Model Name" : "例如：12345，留空则使用 App Name"}
                 className="w-full border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
               />
             </div>
@@ -201,26 +219,17 @@ export default function StrategyManage() {
                 onChange={(e) => setHandler(e.target.value)}
                 className="w-full border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition bg-white"
               >
-                {AVAILABLE_HANDLERS.map(h => (
-                  <option key={h.value} value={h.value}>{h.label} ({h.value})</option>
+                {activeHandlers.map(h => (
+                  <option key={h} value={h}>{h}</option>
                 ))}
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">展示名称</label>
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">备注</label>
               <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="例如：跑马圈文本生成"
-                className="w-full border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">用途说明</label>
-              <input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="简要描述"
+                value={remark}
+                onChange={(e) => setRemark(e.target.value)}
+                placeholder="简要备注"
                 className="w-full border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
               />
             </div>
@@ -264,9 +273,10 @@ export default function StrategyManage() {
           <table className="w-full text-sm text-left">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium uppercase tracking-wider">
               <tr>
-                <th className="px-6 py-4">{tab === 'model' ? 'Model Name' : 'App ID'}</th>
+                <th className="px-6 py-4">{tab === 'model' ? 'Model Name' : 'App Name'}</th>
+                <th className="px-6 py-4">{tab === 'model' ? 'Model ID (上游)' : 'App ID (上游)'}</th>
                 <th className="px-6 py-4">处理策略 (Handler)</th>
-                <th className="px-6 py-4">名称</th>
+                <th className="px-6 py-4">备注</th>
                 <th className="px-6 py-4">状态</th>
                 <th className="px-6 py-4 text-right">操作</th>
               </tr>
@@ -274,7 +284,7 @@ export default function StrategyManage() {
             <tbody className="divide-y divide-slate-100">
               {items.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
                     <div className="flex flex-col items-center gap-2">
                       <Cpu size={32} strokeWidth={1.5} />
                       <p>暂无{tab === 'model' ? '模型' : '应用'}策略配置</p>
@@ -292,17 +302,19 @@ export default function StrategyManage() {
                         </span>
                       )}
                     </td>
+                    <td className="px-6 py-4 font-mono text-xs text-slate-500">
+                      {k.upstreamId || <span className="text-slate-300 italic">同左</span>}
+                    </td>
                     <td className="px-6 py-4 font-mono text-[11px] text-blue-600 bg-blue-50/50 rounded">
                       {k.handler}
                     </td>
-                    <td className="px-6 py-4 text-slate-600">
-                      <div>{k.name || '-'}</div>
-                      {k.description && <div className="text-[10px] text-slate-400 mt-0.5">{k.description}</div>}
+                    <td className="px-6 py-4 text-slate-600 text-xs">
+                      {k.remark || '-'}
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                        k.status === 'active' 
-                          ? 'bg-green-50 text-green-700 border border-green-100' 
+                        k.status === 'active'
+                          ? 'bg-green-50 text-green-700 border border-green-100'
                           : 'bg-slate-100 text-slate-500 border border-slate-200'
                       }`}>
                         {k.status === 'active' ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
@@ -321,8 +333,8 @@ export default function StrategyManage() {
                       <button
                         onClick={() => handleToggle(k)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                          k.status === 'active' 
-                            ? 'text-slate-600 hover:bg-slate-100' 
+                          k.status === 'active'
+                            ? 'text-slate-600 hover:bg-slate-100'
                             : 'text-blue-600 hover:bg-blue-50'
                         }`}
                       >

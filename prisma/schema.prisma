@@ -45,10 +45,10 @@ model ApiKey {
 // 模型策略路由表
 model ModelStrategy {
   id          String   @id @default(uuid())
-  modelName   String   @unique @db.VarChar(100)
+  modelName   String   @unique @db.VarChar(100)  // 客户端传的模型名称
+  modelId     String?  @db.VarChar(100)           // 上游真实模型 ID，不填则 fallback 到 modelName
   handler     String   @db.VarChar(50)
-  name        String?  @db.VarChar(100)
-  description String?  @db.Text
+  remark      String?  @db.VarChar(500)           // 备注
   status      String   @default("active")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -59,10 +59,10 @@ model ModelStrategy {
 // 应用策略路由表
 model AppStrategy {
   id          String   @id @default(uuid())
-  appId       String   @unique @db.VarChar(100) // RunningHub 真实的 App ID (URL 后面的数字)
+  appName     String   @unique @db.VarChar(100) // 客户端传的应用名称标识
+  appId       String?  @db.VarChar(100)          // 上游真实 RunningHub App ID (URL 后面的数字)
   handler     String   @db.VarChar(50)
-  name        String?  @db.VarChar(100)
-  description String?  @db.Text
+  remark      String?  @db.VarChar(500)           // 备注
   config      Json?                    // 存储 {"nodeInfoList": [...]} 模板
   status      String   @default("active")
   createdAt   DateTime @default(now())

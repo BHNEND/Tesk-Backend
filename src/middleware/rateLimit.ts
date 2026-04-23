@@ -2,7 +2,7 @@ import { FastifyRequest, FastifyReply } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { FastifyInstance } from "fastify";
 
-export async function setupRateLimit(app: FastifyInstance) {
+export async function setupRateLimit(app: FastifyInstance<any, any, any, any, any>) {
   await app.register(rateLimit, {
     max: 10,
     timeWindow: "1 second",

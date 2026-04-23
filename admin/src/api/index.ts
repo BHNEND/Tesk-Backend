@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: import.meta.env.BASE_URL + 'api/v1/admin', // 自动适应 /admin/ 前缀
+  baseURL: '/api/v1/admin',
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
 });
@@ -55,7 +55,7 @@ export const deleteAppStrategy = (id: string) => api.delete(`/strategies/apps/${
 
 // --- Public Job APIs (针对测试客户端使用) ---
 const publicApi = axios.create({
-  baseURL: import.meta.env.BASE_URL + 'api/v1/jobs',
+  baseURL: '/api/v1/jobs',
   timeout: 15000,
 });
 

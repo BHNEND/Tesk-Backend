@@ -4,12 +4,20 @@ import { randomUUID } from "crypto";
 
 import { env } from "../config/env.js";
 
-// ... (TaskListQuery 接口定义)
+interface TaskListQuery {
+  page?: string;
+  pageSize?: string;
+  state?: string;
+  startTime?: string;
+  endTime?: string;
+}
+
+const hidden = { schema: { hide: true } };
 
 export async function adminRoutes(app: FastifyInstance) {
   // === Authentication ===
-  
-  app.post("/api/v1/admin/login", async (request, reply) => {
+
+  app.post("/api/v1/admin/login", hidden, async (request, reply) => {
     const { username, password } = request.body as any;
     
     if (username === env.adminUser && password === env.adminPass) {
@@ -25,7 +33,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // === Task Management ===
 
-  app.get<{ Querystring: TaskListQuery }>("/api/v1/admin/tasks", async (request, reply) => {
+  app.get<{ Querystring: TaskListQuery }>("/api/v1/admin/tasks", hidden, async (request, reply) => {
     const { page = "1", pageSize = "20", state, startTime, endTime } = request.query;
     const skip = (parseInt(page) - 1) * parseInt(pageSize);
     const take = parseInt(pageSize);
@@ -63,7 +71,7 @@ export async function adminRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get<{ Params: { taskId: string } }>("/api/v1/admin/tasks/:taskId", async (request, reply) => {
+  app.get<{ Params: { taskId: string } }>("/api/v1/admin/tasks/:taskId", hidden, async (request, reply) => {
     const { taskId } = request.params;
     const task = await prisma.taskJob.findUnique({ where: { id: taskId } });
 
@@ -74,7 +82,7 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send({ code: 200, msg: "success", data: task });
   });
 
-  app.get("/api/v1/admin/stats", async (request, reply) => {
+  app.get("/api/v1/admin/stats", hidden, async (request, reply) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -113,7 +121,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // === API Key Management ===
 
-  app.post("/api/v1/admin/apikeys", async (request, reply) => {
+  app.post("/api/v1/admin/apikeys", hidden, async (request, reply) => {
     const { name } = request.body as any;
     if (!name) {
       return reply.status(400).send({ code: 400, msg: "Missing required field: name" });
@@ -127,7 +135,7 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.send({ code: 200, msg: "success", data: apiKey });
   });
 
-  app.get("/api/v1/admin/apikeys", async (request, reply) => {
+  app.get("/api/v1/admin/apikeys", hidden, async (request, reply) => {
     const keys = await prisma.apiKey.findMany({
       orderBy: { createdAt: "desc" },
     });
@@ -138,7 +146,7 @@ export async function adminRoutes(app: FastifyInstance) {
   app.patch<{
     Params: { id: string };
     Body: { status?: string; name?: string; rpmLimit?: number; concurrencyLimit?: number; ipWhitelist?: string };
-  }>("/api/v1/admin/apikeys/:id", async (request, reply) => {
+  }>("/api/v1/admin/apikeys/:id", hidden, async (request, reply) => {
     const { id } = request.params;
     const { status, name, rpmLimit, concurrencyLimit, ipWhitelist } = request.body;
 
@@ -164,7 +172,7 @@ export async function adminRoutes(app: FastifyInstance) {
     }
   });
 
-  app.delete<{ Params: { id: string } }>("/api/v1/admin/apikeys/:id", async (request, reply) => {
+  app.delete<{ Params: { id: string } }>("/api/v1/admin/apikeys/:id", hidden, async (request, reply) => {
     try {
       await prisma.apiKey.delete({ where: { id: request.params.id } });
       return reply.send({ code: 200, msg: "success" });
@@ -174,19 +182,19 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   // === Strategy Management (Models) ===
-  app.get("/api/v1/admin/strategies/models", async (request, reply) => {
+  app.get("/api/v1/admin/strategies/models", hidden, async (request, reply) => {
     const models = await prisma.modelStrategy.findMany({ orderBy: { createdAt: "desc" } });
     return reply.send({ code: 200, msg: "success", data: models });
   });
 
-  app.post("/api/v1/admin/strategies/models", async (request, reply) => {
-    const { modelName, handler, name, description, config } = request.body as any;
+  app.post("/api/v1/admin/strategies/models", hidden, async (request, reply) => {
+    const { modelName, modelId, handler, remark } = request.body as any;
     if (!modelName || !handler) {
       return reply.status(400).send({ code: 400, msg: "Missing required fields" });
     }
     try {
       const created = await prisma.modelStrategy.create({
-        data: { modelName, handler, name, description, config },
+        data: { modelName, modelId: modelId || null, handler, remark: remark || null },
       });
       return reply.send({ code: 200, msg: "success", data: created });
     } catch (err: any) {
@@ -195,12 +203,13 @@ export async function adminRoutes(app: FastifyInstance) {
     }
   });
 
-  app.patch<{ Params: { id: string }, Body: any }>("/api/v1/admin/strategies/models/:id", async (request, reply) => {
+  app.patch<{ Params: { id: string }, Body: any }>("/api/v1/admin/strategies/models/:id", hidden, async (request, reply) => {
     const { id } = request.params;
+    const { config, ...data } = request.body as any;
     try {
       const updated = await prisma.modelStrategy.update({
         where: { id },
-        data: request.body as any,
+        data,
       });
       return reply.send({ code: 200, msg: "success", data: updated });
     } catch {
@@ -208,7 +217,7 @@ export async function adminRoutes(app: FastifyInstance) {
     }
   });
 
-  app.delete<{ Params: { id: string } }>("/api/v1/admin/strategies/models/:id", async (request, reply) => {
+  app.delete<{ Params: { id: string } }>("/api/v1/admin/strategies/models/:id", hidden, async (request, reply) => {
     try {
       await prisma.modelStrategy.delete({ where: { id: request.params.id } });
       return reply.send({ code: 200, msg: "success" });
@@ -218,28 +227,28 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   // === Strategy Management (Apps) ===
-  app.get("/api/v1/admin/strategies/apps", async (request, reply) => {
+  app.get("/api/v1/admin/strategies/apps", hidden, async (request, reply) => {
     const apps = await prisma.appStrategy.findMany({ orderBy: { createdAt: "desc" } });
     return reply.send({ code: 200, msg: "success", data: apps });
   });
 
-  app.post("/api/v1/admin/strategies/apps", async (request, reply) => {
-    const { appId, handler, name, description, config } = request.body as any;
-    if (!appId || !handler) {
-      return reply.status(400).send({ code: 400, msg: "Missing required fields" });
+  app.post("/api/v1/admin/strategies/apps", hidden, async (request, reply) => {
+    const { appName, appId, handler, remark, config } = request.body as any;
+    if (!appName || !handler) {
+      return reply.status(400).send({ code: 400, msg: "Missing required fields: appName, handler" });
     }
     try {
       const created = await prisma.appStrategy.create({
-        data: { appId, handler, name, description, config },
+        data: { appName, appId: appId || null, handler, remark: remark || null, config },
       });
       return reply.send({ code: 200, msg: "success", data: created });
     } catch (err: any) {
-      if (err.code === "P2002") return reply.status(400).send({ code: 400, msg: "App ID already exists" });
+      if (err.code === "P2002") return reply.status(400).send({ code: 400, msg: "App Name already exists" });
       throw err;
     }
   });
 
-  app.patch<{ Params: { id: string }, Body: any }>("/api/v1/admin/strategies/apps/:id", async (request, reply) => {
+  app.patch<{ Params: { id: string }, Body: any }>("/api/v1/admin/strategies/apps/:id", hidden, async (request, reply) => {
     const { id } = request.params;
     try {
       const updated = await prisma.appStrategy.update({
@@ -252,7 +261,7 @@ export async function adminRoutes(app: FastifyInstance) {
     }
   });
 
-  app.delete<{ Params: { id: string } }>("/api/v1/admin/strategies/apps/:id", async (request, reply) => {
+  app.delete<{ Params: { id: string } }>("/api/v1/admin/strategies/apps/:id", hidden, async (request, reply) => {
     try {
       await prisma.appStrategy.delete({ where: { id: request.params.id } });
       return reply.send({ code: 200, msg: "success" });

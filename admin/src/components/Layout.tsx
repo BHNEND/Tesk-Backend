@@ -1,5 +1,5 @@
-import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, ListTodo, Key, FileJson, Rocket, Cpu, Terminal } from 'lucide-react';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, ListTodo, Key, FileJson, Rocket, Cpu, Terminal, LogOut } from 'lucide-react';
 
 const links = [
   { to: '/', label: '仪表盘', icon: LayoutDashboard },
@@ -11,6 +11,13 @@ const links = [
 ];
 
 export default function Layout() {
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    localStorage.removeItem('admin_token');
+    navigate('/login', { replace: true });
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row">
       {/* Sidebar */}
@@ -41,6 +48,13 @@ export default function Layout() {
         </nav>
         
         <div className="p-4 border-t border-slate-800">
+          <button
+            onClick={handleLogout}
+            className="w-full mb-3 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 transition"
+          >
+            <LogOut size={16} />
+            退出登录
+          </button>
           <div className="px-4 py-3 bg-slate-800/50 rounded-lg text-xs text-slate-400">
             v1.1.0-alpha
           </div>
@@ -59,6 +73,13 @@ export default function Layout() {
               <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
               Service Operational
             </span>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition"
+            >
+              <LogOut size={16} />
+              退出登录
+            </button>
           </div>
         </header>
 
@@ -87,4 +108,3 @@ export default function Layout() {
     </div>
   );
 }
-

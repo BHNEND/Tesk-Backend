@@ -6,13 +6,18 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "init-db": "prisma db push"
+    "init-db": "prisma db push",
+    "pack": "bash scripts/pack.sh"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1034.0",
     "@fastify/cors": "^11.2.0",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^9.0.0",
+    "@fastify/swagger": "^9.7.0",
+    "@fastify/swagger-ui": "^5.2.6",
     "@prisma/client": "^6.19.2",
+    "@scalar/fastify-api-reference": "^1.52.5",
     "bullmq": "^5.71.1",
     "dotenv": "^17.3.1",
     "fastify": "^5.8.4",

@@ -98,8 +98,8 @@ Content-Type: application/json
 | `image_urls` | string[] | 图片 URL 列表 |
 | `video_urls` | string[] | 视频 URL 列表 |
 | `audio_urls` | string[] | 音频 URL 列表 |
-| `aspect_ratio` | string | 宽高比（如 `"16:9"`） |
-| `resolution` | string | 分辨率（如 `"1024x1024"`） |
+| `aspect_ratio` | string | 宽高比（如 `"1:1"`、`"2:3"`、`"3:2"`、`"auto"`） |
+| `resolution` | string | 分辨率（如 `"1k"`、`"2k"`、`"4k"`） |
 | `duration` | number | 时长（秒） |
 | `extra` | object | 扩展参数，用于透传特定 Handler 所需的非标准字段 |
 

@@ -2,19 +2,36 @@ import { useState, useEffect, useRef } from 'react';
 import { Play, Search, Loader2, CheckCircle2, XCircle, Info, Copy, Braces, ArrowRightLeft, Eye } from 'lucide-react';
 import { createTask, getJobRecord, getApiKeys, getAppStrategies, getModelStrategies, previewTask } from '../api';
 
-const DEFAULT_INPUT = {
+const TEXT_TO_IMAGE_TEMPLATE = {
   prompt: "A beautiful sunset over the ocean",
-  aspect_ratio: "16:9",
-  resolution: "1080p",
+  aspect_ratio: "auto"
+};
+
+const IMAGE_EDIT_TEMPLATE = {
+  prompt: "将他们合并在一个图片里面",
+  image_urls: [
+    "https://example.com/image1.png",
+    "https://example.com/image2.png"
+  ],
+  aspect_ratio: "1:1",
+  resolution: "1k",
+  extra: {
+    n: 1
+  }
+};
+
+const APP_TASK_TEMPLATE = {
+  prompt: "女人站起身来，旋转一圈。",
+  image_urls: [
+    "https://example.com/ref.png"
+  ],
   duration: 5
 };
 
-const EXTRA_TEMPLATE = {
-  prompt: "A beautiful sunset",
-  extra: {
-    "开关A": 1,
-    "风格": "写实"
-  }
+const GEMINI_IMAGE_TEMPLATE = {
+  prompt: "A photorealistic close-up portrait of a cute cat wearing sunglasses",
+  aspect_ratio: "16:9",
+  resolution: "2k"
 };
 
 export default function TestClient() {
@@ -22,18 +39,21 @@ export default function TestClient() {
   const [identifier, setIdentifier] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [callbackUrl, setCallbackUrl] = useState('https://webhook.site/test');
-  const [inputJson, setInputJson] = useState(JSON.stringify(DEFAULT_INPUT, null, 2));
-  
+  const [inputJson, setInputJson] = useState(JSON.stringify(TEXT_TO_IMAGE_TEMPLATE, null, 2));
+
   const [loadingDefaults, setLoadingDefaults] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [submitRes, setSubmitRes] = useState<any>(null);
-  
+
   const [queryTaskId, setQueryTaskId] = useState('');
   const [taskStatus, setTaskStatus] = useState<any>(null);
   const [previewData, setPreviewData] = useState<any>(null);
   const [autoPoll, setAutoPoll] = useState(false);
   const pollTimer = useRef<any>(null);
+
+  const [modelOptions, setModelOptions] = useState<any[]>([]);
+  const [appOptions, setAppOptions] = useState<any[]>([]);
 
   // 自动填充逻辑
   useEffect(() => {
@@ -45,13 +65,17 @@ export default function TestClient() {
         const activeKey = allKeys.find((k: any) => k.status === 'active');
         if (activeKey) setApiKey(activeKey.key);
 
+        const { data: modelRes } = await getModelStrategies();
+        const models = modelRes.data || [];
+        setModelOptions(models);
+
+        const { data: appRes } = await getAppStrategies();
+        const apps = appRes.data || [];
+        setAppOptions(apps);
+
         if (taskType === 'app') {
-          const { data: appRes } = await getAppStrategies();
-          const apps = appRes.data || [];
-          if (apps.length > 0) setIdentifier(apps[0].appId);
+          if (apps.length > 0) setIdentifier(apps[0].appName || apps[0].appid);
         } else {
-          const { data: modelRes } = await getModelStrategies();
-          const models = modelRes.data || [];
           if (models.length > 0) setIdentifier(models[0].modelName);
         }
       } catch (e) {
@@ -71,7 +95,7 @@ export default function TestClient() {
 
     setSubmitting(true);
     setSubmitRes(null);
-    setPreviewData(null); // 清除之前的预览
+    setPreviewData(null);
     try {
       const payload: any = { type: taskType, callBackUrl: callbackUrl, input };
       if (taskType === 'app') payload.appid = identifier;
@@ -150,8 +174,9 @@ export default function TestClient() {
   const findImageUrls = (obj: any): string[] => {
     let urls: string[] = [];
     if (!obj) return urls;
+    if (Array.isArray(obj?.resultUrls)) return obj.resultUrls;
     for (let k in obj) {
-      if (typeof obj[k] === 'string' && obj[k].startsWith('http') && obj[k].match(/\.(jpeg|jpg|gif|png|webp)/i)) {
+      if (typeof obj[k] === 'string' && obj[k].startsWith('http') && obj[k].match(/\.(jpeg|jpg|gif|png|webp|mp4)/i)) {
         urls.push(obj[k]);
       } else if (typeof obj[k] === 'object') {
         urls = urls.concat(findImageUrls(obj[k]));
@@ -161,6 +186,9 @@ export default function TestClient() {
   };
 
   const imageUrls = findImageUrls(taskStatus?.resultJson);
+
+  const options = taskType === 'model' ? modelOptions : appOptions;
+  const optionsEmpty = options.length === 0;
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -182,7 +210,7 @@ export default function TestClient() {
               <Play size={18} className="text-blue-600" />
               <h2 className="font-semibold text-slate-800">1. 发起任务 (Create Task)</h2>
             </div>
-            
+
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
@@ -206,17 +234,28 @@ export default function TestClient() {
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{taskType === 'app' ? 'RunningHub App ID' : 'Model Name'}</label>
-                  <input type="text" value={identifier} onChange={e => setIdentifier(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition" />
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{taskType === 'app' ? 'App Name (应用名称)' : 'Model Name (模型名称)'}</label>
+                  {optionsEmpty ? (
+                    <input type="text" value={identifier} onChange={e => setIdentifier(e.target.value)} placeholder={taskType === 'model' ? "暂无模型策略，手动输入" : "暂无应用策略，手动输入"} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition" />
+                  ) : (
+                    <select value={identifier} onChange={e => setIdentifier(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none transition" >
+                      {taskType === 'model'
+                        ? modelOptions.map((m: any) => <option key={m.modelName} value={m.modelName}>{m.modelName}</option>)
+                        : appOptions.map((a: any) => <option key={a.appName || a.appid} value={a.appName || a.appid}>{a.appName || a.appid}</option>)
+                      }
+                    </select>
+                  )}
                 </div>
               </div>
 
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center">
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Input JSON (参数对暗号)</label>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Input JSON (任务参数)</label>
                   <div className="flex gap-2">
-                    <button onClick={() => setInputJson(JSON.stringify(DEFAULT_INPUT, null, 2))} className="text-[10px] text-blue-600 hover:underline">常用模板</button>
-                    <button onClick={() => setInputJson(JSON.stringify(EXTRA_TEMPLATE, null, 2))} className="text-[10px] text-purple-600 hover:underline">自定义暗号</button>
+                    <button onClick={() => setInputJson(JSON.stringify(TEXT_TO_IMAGE_TEMPLATE, null, 2))} className="text-[10px] text-blue-600 hover:underline">文生图</button>
+                    <button onClick={() => setInputJson(JSON.stringify(IMAGE_EDIT_TEMPLATE, null, 2))} className="text-[10px] text-orange-600 hover:underline">图片编辑</button>
+                    <button onClick={() => setInputJson(JSON.stringify(APP_TASK_TEMPLATE, null, 2))} className="text-[10px] text-purple-600 hover:underline">应用任务</button>
+                    <button onClick={() => setInputJson(JSON.stringify(GEMINI_IMAGE_TEMPLATE, null, 2))} className="text-[10px] text-teal-600 hover:underline">Gemini生图</button>
                   </div>
                 </div>
                 <textarea value={inputJson} onChange={e => setInputJson(e.target.value)} rows={8} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none transition" />
@@ -255,12 +294,37 @@ export default function TestClient() {
                 {previewData && <span className="text-[10px] bg-purple-600 text-white px-2 py-0.5 rounded-full font-bold">DRY RUN</span>}
               </div>
               <div className="p-4 space-y-3">
+                {previewData?.meta && (
+                  <div className="flex gap-3 flex-wrap">
+                    <span className="inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                      标识符: {previewData.meta.identifier}
+                    </span>
+                    <span className="inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-100">
+                      Handler: {previewData.meta.handler}
+                    </span>
+                    {previewData.meta.platform && (
+                      <span className="inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold bg-green-50 text-green-700 border border-green-100">
+                        平台: {previewData.meta.platform}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase">Endpoint URL</span>
                   <div className="bg-white border border-slate-200 rounded px-2 py-1 text-[10px] font-mono text-slate-600 break-all">{previewData ? previewData.url : taskStatus?.upstreamRequest?.url}</div>
                 </div>
                 <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Payload (nodeInfoList)</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Method</span>
+                  <div className="bg-white border border-slate-200 rounded px-2 py-1 text-[10px] font-mono text-slate-600">{previewData ? previewData.method : 'POST'}</div>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Headers</span>
+                  <pre className="bg-slate-900 text-green-300 p-3 rounded-lg text-[10px] font-mono overflow-auto max-h-32 shadow-inner">
+                    {JSON.stringify(previewData?.headers || { "Content-Type": "application/json", "Authorization": "Bearer ***" }, null, 2)}
+                  </pre>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Request Body</span>
                   <pre className="bg-slate-900 text-purple-300 p-3 rounded-lg text-[10px] font-mono overflow-auto max-h-60 shadow-inner">
                     {JSON.stringify(previewData ? previewData.body : taskStatus?.upstreamRequest?.body, null, 2)}
                   </pre>
@@ -277,7 +341,7 @@ export default function TestClient() {
             <div className="p-6 space-y-4">
               <div className="flex gap-2">
                 <input type="text" value={queryTaskId} onChange={e => setQueryTaskId(e.target.value)} placeholder="Task ID (task_...)" className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none transition" />
-                <button 
+                <button
                   onClick={() => {
                     if (!queryTaskId) return alert('请先输入要查询的 Task ID');
                     setTaskStatus(null);
@@ -315,7 +379,11 @@ export default function TestClient() {
                   <div className="grid grid-cols-1 gap-4">
                     {imageUrls.map((url, i) => (
                       <div key={i} className="group relative rounded-lg overflow-hidden border shadow-sm">
-                        <img src={url} alt="result" className="w-full object-contain bg-slate-50" />
+                        {url.match(/\.(mp4|webm)/i) ? (
+                          <video src={url} controls className="w-full" />
+                        ) : (
+                          <img src={url} alt="result" className="w-full object-contain bg-slate-50" />
+                        )}
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2"><a href={url} target="_blank" className="p-2 bg-white rounded-full text-slate-900 hover:scale-110 transition"><Info size={20} /></a></div>
                       </div>
                     ))}

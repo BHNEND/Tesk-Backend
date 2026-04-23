@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getTasks } from '../api';
 import StatusBadge from '../components/StatusBadge';
-import { Search, Filter, RefreshCcw, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
+import { Search, Filter, RefreshCcw, ChevronLeft, ChevronRight, ExternalLink, Eye, X } from 'lucide-react';
 
 interface Task {
   id: string;
@@ -10,6 +10,7 @@ interface Task {
   model: string | null;
   appid: string | null;
   state: string;
+  resultJson: any;
   createTime: string;
   completeTime: string | null;
   costTime: number | null;
@@ -24,7 +25,26 @@ export default function TaskList() {
   const [total, setTotal] = useState(0);
   const [stateFilter, setStateFilter] = useState('全部状态');
   const [loading, setLoading] = useState(true);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [showPreview, setShowPreview] = useState(false);
   const pageSize = 15;
+
+  const extractMediaUrls = (obj: any): string[] => {
+    const urls: string[] = [];
+    if (!obj) return urls;
+    const str = JSON.stringify(obj);
+    const matches = str.matchAll(/"(https?:\/\/[^"]+\.(?:mp4|webm|png|jpg|jpeg|gif|webp)[^"]*)"/gi);
+    for (const m of matches) urls.push(m[1]);
+    return urls;
+  };
+
+  const handlePreview = (task: Task) => {
+    const urls = extractMediaUrls(task.resultJson);
+    if (urls.length > 0) {
+      setPreviewUrls(urls);
+      setShowPreview(true);
+    }
+  };
 
   const fetch = () => {
     setLoading(true);
@@ -82,7 +102,7 @@ export default function TaskList() {
               <tr>
                 <th className="px-6 py-4">Task ID</th>
                 <th className="px-6 py-4">类型</th>
-                <th className="px-6 py-4">标识符 (Model/App)</th>
+                <th className="px-6 py-4">模型名称</th>
                 <th className="px-6 py-4">状态</th>
                 <th className="px-6 py-4">创建时间</th>
                 <th className="px-6 py-4">耗时</th>
@@ -124,8 +144,17 @@ export default function TaskList() {
                     <td className="px-6 py-4 text-slate-600 font-mono text-xs">
                       {t.costTime != null ? `${(t.costTime / 1000).toFixed(2)}s` : '-'}
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <button 
+                    <td className="px-6 py-4 text-right space-x-1">
+                      {t.state === 'SUCCESS' && extractMediaUrls(t.resultJson).length > 0 && (
+                        <button
+                          onClick={() => handlePreview(t)}
+                          className="p-1.5 text-green-500 hover:text-green-600 hover:bg-green-50 rounded-md transition"
+                          title="预览结果"
+                        >
+                          <Eye size={16} />
+                        </button>
+                      )}
+                      <button
                         onClick={() => navigate(`/tasks/${t.id}`)}
                         className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition"
                       >
@@ -167,6 +196,31 @@ export default function TaskList() {
           </div>
         )}
       </div>
+
+      {/* Preview Modal */}
+      {showPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowPreview(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-auto p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-800">结果预览</h3>
+              <button onClick={() => setShowPreview(false)} className="p-1.5 hover:bg-slate-100 rounded-lg transition">
+                <X size={20} className="text-slate-500" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              {previewUrls.map((url, i) => (
+                <div key={i} className="rounded-lg overflow-hidden border border-slate-200 bg-slate-50">
+                  {url.match(/\.(mp4|webm)/i) ? (
+                    <video src={url} controls className="w-full max-h-[60vh]" />
+                  ) : (
+                    <img src={url} alt={`result-${i}`} className="w-full object-contain max-h-[60vh]" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

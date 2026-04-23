@@ -6,7 +6,11 @@ export async function adminAuthMiddleware(
   reply: FastifyReply
 ) {
   // 1. 跳过 OPTIONS 请求和登录接口
-  if (request.method === "OPTIONS" || request.url.includes("/admin/login")) {
+  // 实际登录地址是 /admin/api/v1/admin/login（外层还有 /admin 前缀）
+  if (
+    request.method === "OPTIONS" ||
+    request.url.includes("/api/v1/admin/login")
+  ) {
     return;
   }
 

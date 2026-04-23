@@ -1,6 +1,8 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
+import swagger from "@fastify/swagger";
+import scalar from "@scalar/fastify-api-reference";
 import path from "path";
 import { fileURLToPath } from "url";
 import { authMiddleware } from "./middleware/auth.js";
@@ -13,10 +15,22 @@ import { startTimeoutChecker } from "./services/timeoutChecker.js";
 import { env } from "./config/env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const storagePath = path.join(__dirname, "..", "storage");
 
-const app = Fastify({ 
+const app = Fastify({
   logger: true,
-  trustProxy: true // 开启以获取真实客户端 IP (尤其是在 Nginx/CDN 之后)
+  trustProxy: true,
+  ajv: {
+    customOptions: {
+      removeAdditional: "all",
+      useDefaults: true,
+    },
+    plugins: [
+      ((ajv: any) => {
+        ajv.addKeyword("example");
+      }) as any,
+    ],
+  } as any,
 });
 
 // 注册 CORS 插件 (兼容性最强的配置)
@@ -35,8 +49,29 @@ await app.register(cors, {
   strictPreflight: false, // 关闭严格预检，对本地测试更友好
 });
 
+// Swagger/OpenAPI 文档
+await app.register(swagger, {
+  openapi: {
+    openapi: "3.0.0",
+    info: { title: "Tesk Backend API", version: "1.0.0" },
+    servers: [{ url: `http://localhost:${env.port}` }],
+    components: {
+      securitySchemes: {
+        BearerAuth: { type: "http", scheme: "bearer" },
+      },
+    },
+  },
+});
+await app.register(scalar, {
+  routePrefix: "/api-docs",
+  configuration: {
+    theme: "purple",
+    layout: "modern",
+  },
+});
+
 // Health check (no auth)
-app.get("/health", async () => {
+app.get("/health", { schema: { hide: true } }, async () => {
   return { status: "ok", timestamp: new Date().toISOString() };
 });
 
@@ -58,11 +93,19 @@ app.register(
     instance.addHook("onRequest", adminAuthMiddleware);
     await adminRoutes(instance);
   },
-  { prefix: "/admin" }
+  { prefix: "" }
 );
 
 // Serve admin frontend static files (must be registered last)
-const publicPath = path.join(__dirname, "..", "public");
+const publicPath = path.join(__dirname, "..", "admin", "dist");
+
+// Serve locally stored images (base64 decoded from upstream)
+await app.register(fastifyStatic, {
+  root: storagePath,
+  prefix: "/storage/",
+  decorateReply: false,
+});
+
 await app.register(fastifyStatic, {
   root: publicPath,
   prefix: "/admin/",

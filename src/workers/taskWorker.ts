@@ -38,10 +38,21 @@ export function startWorker() {
     }
 
     try {
-      // 3. Execute Business Logic
+      // 3. Resolve upstreamIdentifier from strategy
+      let upstreamIdentifier: string | undefined;
+      if (taskType === 'app') {
+        const strategy = await prisma.appStrategy.findUnique({ where: { appName: identifier } });
+        upstreamIdentifier = strategy?.appId || identifier;
+      } else {
+        const strategy = await prisma.modelStrategy.findUnique({ where: { modelName: identifier } });
+        upstreamIdentifier = strategy?.modelId || identifier;
+      }
+
+      // 4. Execute Business Logic
       const result = await handler.execute({
         taskId,
         identifier,
+        upstreamIdentifier,
         input,
         allocatedKey: allocatedConfig?.key, // 传递借到的 Key
         updateProgress: async (progress: number, message: string) => {

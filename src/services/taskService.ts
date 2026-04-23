@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import { createQueue } from "../config/bullmq.js";
 import { prisma } from "../config/prisma.js";
 import { CreateTaskBody, StandardTaskInput } from "../types/task.js";
-import { fillNodeInfoList } from "../workers/handlers/apps/runningHubHandler.js";
+import { availableHandlers } from "../workers/registry.js";
 import { ApiKey } from "@prisma/client";
 
 const taskQueue = createQueue("task-processing");
@@ -14,31 +14,27 @@ export async function previewTask(body: CreateTaskBody) {
   const taskType = body.type || 'model';
   const identifier = taskType === 'app' ? (body as any).appid : (body as any).model;
 
+  // 从数据库查找策略，获取 handler 名称和上游标识
+  let handlerName: string | undefined;
+  let upstreamIdentifier: string = identifier;
   if (taskType === 'app') {
-    const strategy = await prisma.appStrategy.findUnique({ where: { appId: identifier } });
+    const strategy = await prisma.appStrategy.findUnique({ where: { appName: identifier } });
     if (!strategy) throw new Error(`App Strategy not found for: ${identifier}`);
-
-    const strategyConfig = (strategy.config as any) || {};
-    let templateList = [];
-    if (Array.isArray(strategyConfig)) {
-      templateList = strategyConfig;
-    } else if (strategyConfig.nodeInfoList && Array.isArray(strategyConfig.nodeInfoList)) {
-      templateList = strategyConfig.nodeInfoList;
-    }
-
-    const nodeInfoList = fillNodeInfoList(templateList, body.input as StandardTaskInput);
-
-    return {
-      url: `https://www.runninghub.cn/openapi/v2/run/ai-app/${strategy.appId}`,
-      method: "POST",
-      body: {
-        ...(typeof strategyConfig === 'object' && !Array.isArray(strategyConfig) ? strategyConfig : {}),
-        nodeInfoList
-      }
-    };
+    handlerName = strategy.handler;
+    upstreamIdentifier = strategy.appId || identifier;
+  } else {
+    const strategy = await prisma.modelStrategy.findUnique({ where: { modelName: identifier } });
+    if (!strategy) throw new Error(`Model Strategy not found for: ${identifier}`);
+    handlerName = strategy.handler;
+    upstreamIdentifier = strategy.modelId || identifier;
   }
 
-  return { msg: "Currently only App (RunningHub) tasks support preview mapping." };
+  const handler = availableHandlers[handlerName];
+  if (!handler?.preview) {
+    return { msg: `Handler '${handlerName}' does not support preview.` };
+  }
+
+  return (handler as any).preview(body.input, identifier, upstreamIdentifier);
 }
 
 export async function createTask(body: CreateTaskBody, apiKeyData?: ApiKey) {
@@ -109,7 +105,7 @@ export async function getTaskInfo(taskId: string) {
     param: task.param,
     resultJson: task.resultJson,
     upstreamRequest: task.upstreamRequest,
-    rawError: task.rawError, // 新增：供后台展示的原始错误
+    rawError: task.rawError,
     callBackUrl: task.callBackUrl,
     progressCallBackUrl: task.progressCallBackUrl,
     failCode: task.failCode,
@@ -118,5 +114,26 @@ export async function getTaskInfo(taskId: string) {
     createTime: task.createTime.getTime(),
     updateTime: task.updateTime.getTime(),
     completeTime: task.completeTime ? task.completeTime.getTime() : null,
+  };
+}
+
+export async function getPublicTaskInfo(taskId: string) {
+  const info = await getTaskInfo(taskId);
+  if (!info) return null;
+
+  return {
+    taskId: info.taskId,
+    taskType: info.taskType,
+    model: info.model,
+    appid: info.appid,
+    state: info.state,
+    param: info.param,
+    resultJson: info.resultJson,
+    failCode: info.failCode || "",
+    failMsg: info.failMsg || "",
+    costTime: info.costTime,
+    createTime: info.createTime,
+    updateTime: info.updateTime,
+    completeTime: info.completeTime,
   };
 }

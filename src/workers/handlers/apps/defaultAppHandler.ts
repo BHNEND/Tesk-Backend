@@ -12,8 +12,11 @@ export const defaultAppHandler: TaskHandler = {
     await new Promise((resolve) => setTimeout(resolve, 3000));
     
     return {
-      summary: `This is a mock summary for ${fileUrl || "the document"} in ${language || "default language"}. [App: ${identifier}]`,
-      wordCount: 500,
+      resultUrls: [],
+      metadata: {
+        summary: `This is a mock summary for ${fileUrl || "the document"} in ${language || "default language"}. [App: ${identifier}]`,
+        wordCount: 500,
+      },
     };
   },
 };

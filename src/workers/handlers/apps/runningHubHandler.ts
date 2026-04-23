@@ -1,4 +1,4 @@
-import { TaskHandler, TaskHandlerContext } from "../interface.js";
+import { TaskHandler, TaskHandlerContext, HandlerPreview } from "../interface.js";
 import { env } from "../../../config/env.js";
 import { prisma } from "../../../config/prisma.js";
 import { StandardTaskInput } from "../../../types/task.js";
@@ -16,7 +16,7 @@ export function fillNodeInfoList(templateList: any[], input: StandardTaskInput):
 
   return newList.map((node: any) => {
     const desc = (node.description || "").trim().toLowerCase();
-    
+
     // 1. 基础字段精确映射
     if (desc === "prompt") node.fieldValue = input.prompt;
     else if (desc === "aspect_ratio") node.fieldValue = input.aspect_ratio;
@@ -45,7 +45,6 @@ export function fillNodeInfoList(templateList: any[], input: StandardTaskInput):
 
     // 3. 自定义参数映射 (extra 里的精确匹配)
     else if (input.extra) {
-      // 这里的 extra key 匹配时不强制转小写，保持灵活性
       const originalDesc = (node.description || "").trim();
       if (input.extra[originalDesc] !== undefined) {
         node.fieldValue = input.extra[originalDesc];
@@ -58,53 +57,64 @@ export function fillNodeInfoList(templateList: any[], input: StandardTaskInput):
 
 export const runningHubHandler: TaskHandler = {
   platform: "runninghub",
+
+  async preview(input: any, identifier: string): Promise<HandlerPreview> {
+    const strategy = await prisma.appStrategy.findUnique({ where: { appName: identifier } });
+    if (!strategy) throw new Error(`RunningHub strategy not configured for appName: ${identifier}.`);
+
+    const strategyConfig = (strategy.config as any) || {};
+    let templateList = [];
+    if (Array.isArray(strategyConfig)) templateList = strategyConfig;
+    else if (strategyConfig.nodeInfoList && Array.isArray(strategyConfig.nodeInfoList)) templateList = strategyConfig.nodeInfoList;
+
+    const nodeInfoList = fillNodeInfoList(templateList, input as StandardTaskInput);
+    const upstreamAppId = strategy.appId || identifier;
+
+    return {
+      url: `${RUNNINGHUB_BASE_URL}/run/ai-app/${upstreamAppId}`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer ***",
+      },
+      body: {
+        ...(typeof strategyConfig === 'object' && !Array.isArray(strategyConfig) ? strategyConfig : {}),
+        nodeInfoList,
+      },
+      meta: { identifier, handler: "runningHubHandler", platform: "runninghub" },
+    };
+  },
+
   async execute(ctx: TaskHandlerContext): Promise<any> {
     const { identifier, input, allocatedKey } = ctx;
-    
-    // 优先使用动态借用的 Key，如果没有则回退到默认的环境变量
-    const apiKey = allocatedKey || env.runningHubApiKey;
 
+    const apiKey = allocatedKey || env.runningHubApiKey;
     if (!apiKey) {
       throw new Error("Missing RUNNINGHUB_API_KEY in environment variables and no allocatedKey");
     }
 
-    // 1. 从数据库读取该应用的定制配置 (appId 即为 RunningHub 真实的数字 ID)
-    const strategy = await prisma.appStrategy.findUnique({
-      where: { appId: identifier }
-    });
-
+    const strategy = await prisma.appStrategy.findUnique({ where: { appName: identifier } });
     if (!strategy) {
-      throw new Error(`RunningHub strategy not configured for appId: ${identifier}.`);
+      throw new Error(`RunningHub strategy not configured for appName: ${identifier}.`);
     }
 
-    // 2. 获取配置并构造最终发送给 RunningHub 的 Payload
     const strategyConfig = (strategy.config as any) || {};
-    
-    // 兼容性处理：尝试从 config 或 config.nodeInfoList 获取列表
     let templateList = [];
-    if (Array.isArray(strategyConfig)) {
-      templateList = strategyConfig;
-    } else if (strategyConfig.nodeInfoList && Array.isArray(strategyConfig.nodeInfoList)) {
-      templateList = strategyConfig.nodeInfoList;
-    }
+    if (Array.isArray(strategyConfig)) templateList = strategyConfig;
+    else if (strategyConfig.nodeInfoList && Array.isArray(strategyConfig.nodeInfoList)) templateList = strategyConfig.nodeInfoList;
 
     if (templateList.length === 0) {
       console.warn(`[RunningHub] Warning: No nodeInfoList found in config for App ${identifier}`);
     }
-    
-    // 映射并填充节点列表
-    const nodeInfoList = fillNodeInfoList(templateList, input as StandardTaskInput);
 
-    // 构造最终 Payload
+    const nodeInfoList = fillNodeInfoList(templateList, input as StandardTaskInput);
     const rhPayload = {
       ...(typeof strategyConfig === 'object' && !Array.isArray(strategyConfig) ? strategyConfig : {}),
-      nodeInfoList
+      nodeInfoList,
     };
 
-    // 3. 构建提交 URL (使用真实的 appId)
-    const submitUrl = `${RUNNINGHUB_BASE_URL}/run/ai-app/${strategy.appId}`;
+    const submitUrl = `${RUNNINGHUB_BASE_URL}/run/ai-app/${strategy.appId || identifier}`;
 
-    // 记录发送给上游的真实请求，用于测试页面调试
     await prisma.taskJob.update({
       where: { id: ctx.taskId },
       data: {
@@ -117,8 +127,7 @@ export const runningHubHandler: TaskHandler = {
     });
 
     console.log(`[RunningHub] DEBUG - Final Payload for App ${strategy.appId}:`, JSON.stringify(rhPayload, null, 2));
-    
-    // 4. 提交任务
+
     const submitRes = await fetch(submitUrl, {
       method: "POST",
       headers: {
@@ -143,14 +152,13 @@ export const runningHubHandler: TaskHandler = {
     console.log(`[RunningHub] Task submitted. RH TaskId: ${rhTaskId}`);
     await ctx.updateProgress(10, `Task submitted to RunningHub: ${rhTaskId}`);
 
-    // 3. Polling Loop
     const queryUrl = `${RUNNINGHUB_BASE_URL}/query`;
     let attempts = 0;
-    const maxAttempts = 120; // 10 minutes (120 * 5s)
+    const maxAttempts = 120;
 
     while (attempts < maxAttempts) {
       attempts++;
-      
+
       const queryRes = await fetch(queryUrl, {
         method: "POST",
         headers: {
@@ -168,21 +176,27 @@ export const runningHubHandler: TaskHandler = {
 
         if (status === "SUCCESS") {
           console.log(`[RunningHub] Task ${rhTaskId} SUCCESS`);
-          return queryData; // Return the whole response as resultJson
+          return {
+            resultUrls: (queryData.results || []).map((r: any) => r.url),
+            metadata: {
+              provider: "runninghub",
+              rhTaskId: queryData.taskId,
+              usage: queryData.usage,
+              results: queryData.results,
+            },
+          };
         }
 
         if (status === "FAILED") {
           throw new Error(`RunningHub task failed: ${queryData.errorMessage || "Unknown error"}`);
         }
 
-        // Still running or queued
         await ctx.updateProgress(
-          Math.min(15 + attempts * 2, 95), 
+          Math.min(15 + attempts * 2, 95),
           `Status: ${status} (Attempt ${attempts})`
         );
       }
 
-      // Wait 5 seconds before next poll
       await new Promise((resolve) => setTimeout(resolve, 5000));
     }
 
