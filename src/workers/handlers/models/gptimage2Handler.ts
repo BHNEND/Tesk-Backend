@@ -1,5 +1,6 @@
 import { TaskHandler, TaskHandlerContext, HandlerPreview } from "../interface.js";
 import { env } from "../../../config/env.js";
+import { fetchWithTimeout } from "../../../utils/fetchWithTimeout.js";
 
 const ALLOWED_SIZES = new Set(["1024x1024", "1536x1024", "1024x1536", "2048x2048", "2048x1152", "1152x2048", "3840x2160", "2160x3840", "auto"]);
 const ALLOWED_RESOLUTIONS = new Set(["1k", "2k", "4k"]);
@@ -83,7 +84,7 @@ export const gptimage2Handler: TaskHandler = {
 
     await ctx.updateProgress(10, "Submitting image generation request");
 
-    const response = await fetch(UPSTREAM_URL, {
+    const response = await fetchWithTimeout(UPSTREAM_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -91,7 +92,7 @@ export const gptimage2Handler: TaskHandler = {
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-    });
+    }, 120_000);
 
     if (!response.ok) {
       const errorText = await response.text();

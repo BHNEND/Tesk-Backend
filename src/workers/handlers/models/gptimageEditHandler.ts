@@ -1,5 +1,6 @@
 import { TaskHandler, TaskHandlerContext, HandlerPreview } from "../interface.js";
 import { env } from "../../../config/env.js";
+import { fetchWithTimeout } from "../../../utils/fetchWithTimeout.js";
 
 const UPSTREAM_URL = "https://yunwu.ai/v1/images/edits";
 
@@ -32,7 +33,7 @@ function resolveSize(aspectRatio: string, resolution: string) {
 }
 
 async function downloadAsBlob(url: string): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, {}, 60_000);
   if (!res.ok) throw new Error(`Failed to download image: ${url} - ${res.status}`);
 
   const contentType = res.headers.get("content-type") || "image/png";
@@ -148,14 +149,14 @@ export const gptimageEditHandler: TaskHandler = {
     }
 
     // 4. Send request
-    const response = await fetch(UPSTREAM_URL, {
+    const response = await fetchWithTimeout(UPSTREAM_URL, {
       method: "POST",
       headers: {
         "Accept": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
       body: fd,
-    });
+    }, 120_000);
 
     if (!response.ok) {
       const errorText = await response.text();

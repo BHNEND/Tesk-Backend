@@ -1,4 +1,5 @@
 import { uploadToS3 } from "../../../config/s3.js";
+import { fetchWithTimeout } from "../../../utils/fetchWithTimeout.js";
 
 const BASE_URL = "https://yunwu.ai/v1beta/models";
 
@@ -6,7 +7,7 @@ const BASE_URL = "https://yunwu.ai/v1beta/models";
  * 下载图片 URL → 转 base64 + mimeType
  */
 export async function downloadAsBase64(url: string): Promise<{ data: string; mimeType: string }> {
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, {}, 60_000);
   if (!res.ok) throw new Error(`Failed to download image: ${url} - ${res.status}`);
 
   const contentType = res.headers.get("content-type") || "image/png";

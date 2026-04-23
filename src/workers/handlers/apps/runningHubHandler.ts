@@ -2,6 +2,7 @@ import { TaskHandler, TaskHandlerContext, HandlerPreview } from "../interface.js
 import { env } from "../../../config/env.js";
 import { prisma } from "../../../config/prisma.js";
 import { StandardTaskInput } from "../../../types/task.js";
+import { fetchWithTimeout } from "../../../utils/fetchWithTimeout.js";
 
 const RUNNINGHUB_BASE_URL = "https://www.runninghub.cn/openapi/v2";
 /**
@@ -128,14 +129,14 @@ export const runningHubHandler: TaskHandler = {
 
     console.log(`[RunningHub] DEBUG - Final Payload for App ${strategy.appId}:`, JSON.stringify(rhPayload, null, 2));
 
-    const submitRes = await fetch(submitUrl, {
+    const submitRes = await fetchWithTimeout(submitUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify(rhPayload),
-    });
+    }, 30_000);
 
     if (!submitRes.ok) {
       const errorText = await submitRes.text();
@@ -159,14 +160,14 @@ export const runningHubHandler: TaskHandler = {
     while (attempts < maxAttempts) {
       attempts++;
 
-      const queryRes = await fetch(queryUrl, {
+      const queryRes = await fetchWithTimeout(queryUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`,
         },
         body: JSON.stringify({ taskId: rhTaskId }),
-      });
+      }, 15_000);
 
       if (!queryRes.ok) {
         console.error(`[RunningHub] Query error: ${queryRes.status}`);

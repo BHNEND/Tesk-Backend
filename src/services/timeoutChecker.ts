@@ -1,5 +1,5 @@
 import { prisma } from "../config/prisma.js";
-import { sendWebhookWithRetry } from "./webhook.js";
+import { enqueueWebhook } from "../workers/webhookWorker.js";
 
 const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
@@ -28,8 +28,8 @@ export function startTimeoutChecker() {
           },
         });
 
-        // Send webhook notification for timeout
-        await sendWebhookWithRetry(task.id);
+        // Send webhook notification for timeout (async via queue)
+        await enqueueWebhook(task.id);
       }
     } catch (err) {
       console.error("Timeout checker error:", err);

@@ -1,21 +1,42 @@
 import { prisma } from "../config/prisma.js";
 import { createWorker } from "../config/bullmq.js";
 import type { Job } from "bullmq";
-import { sendWebhookWithRetry } from "../services/webhook.js";
+import { enqueueWebhook } from "./webhookWorker.js";
 import { getTaskHandlerDynamic, getFallbackHandler } from "./registry.js";
 import { upstreamKeyService } from "../services/upstreamKeyService.js";
+import { env } from "../config/env.js";
+
+function memMB(): number {
+  return Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+}
+
+function memSnapshot() {
+  const m = process.memoryUsage();
+  return {
+    rss: Math.round(m.rss / 1024 / 1024),
+    heapUsed: Math.round(m.heapUsed / 1024 / 1024),
+    heapTotal: Math.round(m.heapTotal / 1024 / 1024),
+    external: Math.round(m.external / 1024 / 1024),
+  };
+}
 
 export function startWorker() {
+  // 每 30 秒输出一次进程内存概览
+  setInterval(() => {
+    const m = memSnapshot();
+    console.log(`[MEM] pid=${process.pid} rss=${m.rss}MB heap=${m.heapUsed}/${m.heapTotal}MB ext=${m.external}MB`);
+  }, 30_000).unref();
+
   const worker = createWorker("task-processing", async (job: Job) => {
     const { taskId, taskType, identifier, input } = job.data;
 
-    // Update state to RUNNING
     await prisma.taskJob.update({
       where: { id: taskId },
       data: { state: "RUNNING" },
     });
 
     const startTime = Date.now();
+    const memBefore = memMB();
 
     // 1. Resolve Handler
     let handler = await getTaskHandlerDynamic(taskType || "model", identifier);
@@ -28,11 +49,9 @@ export function startWorker() {
     let allocatedConfig: any = null;
     if (handler.platform) {
       allocatedConfig = await upstreamKeyService.borrowKey(handler.platform);
-      
-      // 如果配置了 Key 但没借到，说明所有 Key 都满了，让 BullMQ 重试 (这就是自动排队机制)
+
       if (!allocatedConfig && upstreamKeyService.hasConfigForPlatform(handler.platform)) {
         console.log(`[Task ${taskId}] All keys for ${handler.platform} are busy, waiting in queue...`);
-        // 抛错触发 BullMQ 重试，注意不要消耗完重试次数，建议在 job 配置里设置合理的延迟
         throw new Error(`UpstreamBusy: all keys for ${handler.platform} are busy.`);
       }
     }
@@ -54,13 +73,20 @@ export function startWorker() {
         identifier,
         upstreamIdentifier,
         input,
-        allocatedKey: allocatedConfig?.key, // 传递借到的 Key
+        allocatedKey: allocatedConfig?.key,
         updateProgress: async (progress: number, message: string) => {
           console.log(`[Task ${taskId} Progress]: ${progress}% - ${message}`);
         }
       });
-      
+
       const costTime = Date.now() - startTime;
+      const memAfter = memMB();
+      const memDelta = memAfter - memBefore;
+
+      console.log(
+        `[MEM] task=${taskId} handler=${handler.platform || 'mock'}/${identifier}` +
+        ` time=${costTime}ms mem=${memBefore}→${memAfter}MB (${memDelta >= 0 ? '+' : ''}${memDelta}MB)`
+      );
 
       // 4. Update Success State
       await prisma.taskJob.update({
@@ -73,21 +99,19 @@ export function startWorker() {
         },
       });
 
-      // 5. Trigger Success Webhook
-      await sendWebhookWithRetry(taskId);
+      // 5. Trigger Success Webhook (async via queue)
+      await enqueueWebhook(taskId);
     } catch (err: any) {
-      // 检查是否为上游并发超限 (429 / Too many requests)
       const errLower = err.message?.toLowerCase() || "";
       if (allocatedConfig && (errLower.includes("429") || errLower.includes("too many requests") || errLower.includes("rate limit"))) {
         console.warn(`[Task ${taskId}] Upstream 429 detected for ${handler.platform}. Cooling down key...`);
-        await upstreamKeyService.cooldownKey(allocatedConfig, 15); // 冷却 15 秒
-        allocatedConfig = null; // 置空，防止 finally 里重复归还
+        await upstreamKeyService.cooldownKey(allocatedConfig, 15);
+        allocatedConfig = null;
       }
 
       const maxAttempts = job.opts.attempts || 1;
       const currentAttempt = job.attemptsMade + 1;
 
-      // 如果是并发超限或正常的重试，则抛出错误触发 BullMQ 重试
       if (currentAttempt < maxAttempts || errLower.includes("upstreambusy")) {
         console.warn(`[Task ${taskId}] Execution failed/Busy (Attempt ${currentAttempt}/${maxAttempts}). Retrying... Error: ${err.message}`);
         throw err;
@@ -95,8 +119,14 @@ export function startWorker() {
 
       console.error(`[Task ${taskId}] Execution failed finally after ${maxAttempts} attempts. Error: ${err.message}`);
       const costTime = Date.now() - startTime;
+      const memAfter = memMB();
+      const memDelta = memAfter - memBefore;
 
-      // 提取原始错误详情供后台排查 (Shadow Record)
+      console.log(
+        `[MEM] task=${taskId} handler=${handler.platform || 'mock'}/${identifier}` +
+        ` FAILED time=${costTime}ms mem=${memBefore}→${memAfter}MB (${memDelta >= 0 ? '+' : ''}${memDelta}MB)`
+      );
+
       const rawError = {
         message: err.message,
         stack: err.stack,
@@ -104,7 +134,6 @@ export function startWorker() {
         responseData: err.response?.data || null,
       };
 
-      // 业务端友好的错误脱敏与标准化
       let failCode = "TASK_EXECUTION_ERROR";
       let failMsg = "任务执行过程中发生未知错误";
 
@@ -115,11 +144,9 @@ export function startWorker() {
         failCode = "UPSTREAM_ERROR";
         failMsg = "上游服务异常或暂时不可用，请稍后重试";
       } else if (err.message) {
-        // 尝试透传一些非敏感的已知错误，如果觉得仍然敏感，可以统一覆盖
         failMsg = err.message;
       }
 
-      // 6. Update Failure State
       await prisma.taskJob.update({
         where: { id: taskId },
         data: {
@@ -132,24 +159,25 @@ export function startWorker() {
         },
       });
 
-      // 7. Trigger Failure Webhook
-      await sendWebhookWithRetry(taskId);
+      await enqueueWebhook(taskId);
 
       throw err;
     } finally {
-      // 8. 归还名额
       if (allocatedConfig) {
         await upstreamKeyService.returnKey(allocatedConfig);
       }
     }
-  }, { concurrency: 3 } as any);
+  }, {
+    concurrency: env.workerConcurrency,
+    lockDuration: 5 * 60 * 1000,
+    maxStalledCount: 2,
+  });
 
   worker.on("completed", (job) => {
     console.log(`✅ Job ${job.id} completed`);
   });
 
   worker.on("failed", (job, err) => {
-    // 过滤掉正常的排队重试日志，减少噪音
     if (!err.message.includes("UpstreamBusy")) {
       console.error(`❌ Job ${job?.id} failed: ${err.message}`);
     }

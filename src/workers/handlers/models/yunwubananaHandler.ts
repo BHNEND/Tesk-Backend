@@ -7,6 +7,7 @@ import {
   downloadAsBase64,
   processGeminiResponse,
 } from "./geminiImageUtils.js";
+import { fetchWithTimeout } from "../../../utils/fetchWithTimeout.js";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const ALLOWED_ASPECTS = new Set(["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9", "auto"]);
@@ -54,11 +55,11 @@ export const yunwubananaHandler: TaskHandler = {
     await ctx.updateProgress(40, "Submitting Gemini request");
     const body = buildUpstreamBody(parsed.prompt, base64Images, parsed.responseModalities, parsed.aspectRatio, parsed.resolution);
 
-    const response = await fetch(buildUpstreamUrl(upstreamId), {
+    const response = await fetchWithTimeout(buildUpstreamUrl(upstreamId), {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
       body: JSON.stringify(body),
-    });
+    }, 120_000);
 
     if (!response.ok) {
       const errorText = await response.text();

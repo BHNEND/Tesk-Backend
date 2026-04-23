@@ -5,8 +5,8 @@
 | 组件 | 最低版本 | 说明 |
 |------|---------|------|
 | Node.js | 20+ | 推荐使用 LTS 版本 |
-| MySQL | 8.0+ | 需提前创建数据库 |
-| Redis | 7.0+ | 必须，用于 BullMQ 队列和限流计数 |
+| MySQL | 8.0+ | 需提前创建数据库，`max_connections` 建议 500+ |
+| Redis | 7.0+ | 用于 BullMQ 队列、限流计数、上游并发管理 |
 
 ---
 
@@ -23,6 +23,22 @@
 | `ADMIN_PASS` | ❌ | `admin123` | 管理后台登录密码 |
 | `ADMIN_API_KEY` | ✅ | - | 管理后台接口鉴权 Key |
 | `UPSTREAM_CONFIG` | ❌ | `[]` | 上游并发排队配置 (JSON格式) |
+| `RUNNINGHUB_API_KEY` | ❌ | - | RunningHub 上游 API Key |
+| `GPTIMAGE2_API_KEY` | ❌ | - | GPT Image 2 上游 API Key |
+| `GEMINI_API_KEY` | ❌ | - | Gemini 上游 API Key |
+| `S3_ENDPOINT` | ❌ | - | S3 对象存储地址 |
+| `S3_REGION` | ❌ | `auto` | S3 区域 |
+| `S3_ACCESS_KEY` | ❌ | - | S3 Access Key |
+| `S3_SECRET_KEY` | ❌ | - | S3 Secret Key |
+| `S3_BUCKET` | ❌ | - | S3 Bucket 名称 |
+
+### 调优变量
+
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `WORKER_CONCURRENCY` | `20` | 每个 Worker 进程的并行任务数 |
+| `PROCESS_TYPE` | `all` | 进程模式：`all`/`api`/`worker`/`timeout` |
+| `DATABASE_POOL_LIMIT` | `30` | Prisma 数据库连接池大小 |
 
 ### UPSTREAM_CONFIG 示例
 ```json
@@ -62,14 +78,47 @@ npx prisma db push && npx prisma generate
 mkdir -p storage
 ```
 
-### 4. 启动服务
+### 4. 调整 MySQL 连接数
+
+默认配置下总 DB 连接数 = API(15) + Worker×10(40×10) + Timeout(5) = 420。需要调高 MySQL 限制：
+
+```sql
+SET GLOBAL max_connections = 600;
+```
+
+或永久生效，在 `my.cnf` 中添加：
+```ini
+[mysqld]
+max_connections = 600
+```
+
+### 5. 启动服务
 
 ```bash
 pm2 start ecosystem.config.cjs
 pm2 save
 ```
 
-### 5. 配置 Nginx 反向代理
+这会启动 12 个进程：
+
+| 进程名 | 数量 | 说明 | 内存上限 |
+|--------|------|------|---------|
+| `tesk-api` | 1 | HTTP API 服务 | 1G |
+| `tesk-worker` | 10 | 任务处理 Worker | 2G |
+| `tesk-timeout` | 1 | 超时检查器 | 512M |
+
+总并发能力 = 10 × 20 (WORKER_CONCURRENCY) = **200 并发任务**。
+
+### 6. 扩缩 Worker
+
+```bash
+pm2 scale tesk-worker 20    # 扩到 20 个 Worker = 400 并发
+pm2 scale tesk-worker 5     # 缩回来
+```
+
+扩容后注意 DB 连接数也需要相应增加。
+
+### 7. 配置 Nginx 反向代理
 
 在站点 Nginx 配置文件中添加：
 
@@ -90,6 +139,28 @@ location / {
 
 ---
 
+## 监控
+
+```bash
+pm2 status                       # 查看所有进程状态、CPU、内存
+pm2 logs tesk-worker --lines 50  # 查看 Worker 日志（含内存占用）
+pm2 monit                        # 实时 CPU/内存监控面板
+
+# Redis 队列状态
+redis-cli LLEN "bull:task-processing:wait"     # 等待队列深度
+redis-cli ZCARD "bull:task-processing:active"  # 执行中任务数
+redis-cli LLEN "bull:webhook-delivery:wait"    # Webhook 队列深度
+redis-cli KEYS "upstream:concurrency:*"        # 上游 Key 并发占用
+```
+
+Worker 日志中会输出每个任务的内存增量：
+```
+[MEM] task=task_xxx handler=runninghub/xxx time=12340ms mem=85→92MB (+7MB)
+[MEM] pid=12345 rss=210MB heap=180/250MB ext=12MB   # 每 30 秒进程概览
+```
+
+---
+
 ## 访问验证
 
 - **健康检查**：`https://您的域名/health` → `{"status":"ok"}`
@@ -105,3 +176,10 @@ location / {
 
 ### 上游并发排队失效
 - 确认 Redis 运行正常，`REDIS_URL` 配置正确
+
+### Worker 频繁重启
+- 检查 `pm2 logs tesk-worker`，如果看到内存超限，降低 `WORKER_CONCURRENCY` 或增大 `max_memory_restart`
+- 图像类任务内存占用较高（+30~50MB/任务），API 轮询类较低（+5~10MB/任务）
+
+### MySQL 连接数不够
+- 报错 `Too many connections`：调高 MySQL `max_connections`，或减少 Worker 实例数 / 降低 `DATABASE_POOL_LIMIT`
