@@ -138,8 +138,8 @@ async function startAll() {
   const { startWorker, startAppWorker } = await import("./workers/taskWorker.js");
   const { startTimeoutChecker } = await import("./services/timeoutChecker.js");
 
-  const worker = startWorker();
-  startAppWorker();
+  const modelWorker = startWorker();
+  const appWorker = startAppWorker();
 
   const { startWebhookWorker } = await import("./workers/webhookWorker.js");
   startWebhookWorker();
@@ -154,7 +154,7 @@ async function startAll() {
     process.exit(1);
   }
 
-  return { app, worker };
+  return { app, modelWorker, appWorker };
 }
 
 let shutdownInProgress = false;
@@ -180,10 +180,18 @@ if (processType === "api") {
     process.on("SIGINT", () => gracefulShutdown(undefined, app));
   });
 } else if (processType === "worker") {
-  import("./workers/taskWorker.js").then(({ startWorker, startAppWorker }) => {
+  import("./workers/taskWorker.js").then(({ startWorker }) => {
     import("./workers/webhookWorker.js").then(({ startWebhookWorker }) => {
       const worker = startWorker();
-      startAppWorker();
+      startWebhookWorker();
+      process.on("SIGTERM", () => gracefulShutdown(worker));
+      process.on("SIGINT", () => gracefulShutdown(worker));
+    });
+  });
+} else if (processType === "app-worker") {
+  import("./workers/taskWorker.js").then(({ startAppWorker }) => {
+    import("./workers/webhookWorker.js").then(({ startWebhookWorker }) => {
+      const worker = startAppWorker();
       startWebhookWorker();
       process.on("SIGTERM", () => gracefulShutdown(worker));
       process.on("SIGINT", () => gracefulShutdown(worker));
@@ -195,8 +203,12 @@ if (processType === "api") {
     console.log("⏱️  Timeout checker started");
   });
 } else {
-  startAll().then(({ app, worker }) => {
-    process.on("SIGTERM", () => gracefulShutdown(worker, app));
-    process.on("SIGINT", () => gracefulShutdown(worker, app));
+  startAll().then(({ app, modelWorker, appWorker }) => {
+    const shutdown = () => {
+      gracefulShutdown(modelWorker, app);
+      if (appWorker) appWorker.close();
+    };
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
   });
 }

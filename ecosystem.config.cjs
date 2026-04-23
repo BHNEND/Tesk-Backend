@@ -14,16 +14,27 @@ module.exports = {
     {
       name: 'tesk-worker',
       script: 'dist/index.js',
-      instances: 10,
+      instances: 5,
       env: {
         NODE_ENV: 'production',
         PROCESS_TYPE: 'worker',
         WORKER_CONCURRENCY: '20',
-        APP_WORKER_CONCURRENCY: '8',
         DATABASE_POOL_LIMIT: '40',
       },
       max_memory_restart: '2G',
       node_args: '--max-old-space-size=1792',
+    },
+    {
+      name: 'tesk-app-worker',
+      script: 'dist/index.js',
+      instances: 2,
+      env: {
+        NODE_ENV: 'production',
+        PROCESS_TYPE: 'app-worker',
+        APP_WORKER_CONCURRENCY: '4',
+        DATABASE_POOL_LIMIT: '10',
+      },
+      max_memory_restart: '1G',
     },
     {
       name: 'tesk-timeout',

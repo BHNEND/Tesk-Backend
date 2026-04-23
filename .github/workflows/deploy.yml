@@ -60,7 +60,7 @@ jobs:
             npm install --production
             npx prisma generate
             mkdir -p storage
-            pm2 restart tesk-api tesk-worker tesk-timeout || pm2 start ecosystem.config.cjs
+            pm2 restart tesk-api tesk-worker tesk-app-worker tesk-timeout || pm2 start ecosystem.config.cjs
             pm2 save
             rm -f /tmp/tesk-deploy.tar.gz
 

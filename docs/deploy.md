@@ -36,8 +36,9 @@
 
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
-| `WORKER_CONCURRENCY` | `20` | 每个 Worker 进程的并行任务数 |
-| `PROCESS_TYPE` | `all` | 进程模式：`all`/`api`/`worker`/`timeout` |
+| `WORKER_CONCURRENCY` | `20` | 每个 Model Worker 进程的并行任务数 |
+| `APP_WORKER_CONCURRENCY` | `4` | 每个 App Worker 进程的并行任务数 |
+| `PROCESS_TYPE` | `all` | 进程模式：`all`/`api`/`worker`/`app-worker`/`timeout` |
 | `DATABASE_POOL_LIMIT` | `30` | Prisma 数据库连接池大小 |
 
 ### UPSTREAM_CONFIG 示例
@@ -80,7 +81,7 @@ mkdir -p storage
 
 ### 4. 调整 MySQL 连接数
 
-默认配置下总 DB 连接数 = API(15) + Worker×10(40×10) + Timeout(5) = 420。需要调高 MySQL 限制：
+默认配置下总 DB 连接数 = API(15) + Worker×5(40×5) + App-Worker×2(10×2) + Timeout(5) = 240。需要调高 MySQL 限制：
 
 ```sql
 SET GLOBAL max_connections = 600;
@@ -99,21 +100,24 @@ pm2 start ecosystem.config.cjs
 pm2 save
 ```
 
-这会启动 12 个进程：
+这会启动 9 个进程：
 
 | 进程名 | 数量 | 说明 | 内存上限 |
 |--------|------|------|---------|
 | `tesk-api` | 1 | HTTP API 服务 | 1G |
-| `tesk-worker` | 10 | 任务处理 Worker | 2G |
+| `tesk-worker` | 5 | Model 任务处理 Worker | 2G |
+| `tesk-app-worker` | 2 | App 任务处理 Worker（上游 Key 并发控制） | 1G |
 | `tesk-timeout` | 1 | 超时检查器 | 512M |
 
-总并发能力 = 10 × 20 (WORKER_CONCURRENCY) = **200 并发任务**。
+Model 并发能力 = 5 × 20 (WORKER_CONCURRENCY) = **100 并发 Model 任务**。
+App 并发能力 = 2 × 4 (APP_WORKER_CONCURRENCY) = **8 并发 App 任务**（匹配上游 Key 总量）。
 
 ### 6. 扩缩 Worker
 
 ```bash
-pm2 scale tesk-worker 20    # 扩到 20 个 Worker = 400 并发
-pm2 scale tesk-worker 5     # 缩回来
+pm2 scale tesk-worker 20       # Model Worker 扩到 20 = 400 并发
+pm2 scale tesk-worker 5        # 缩回来
+pm2 scale tesk-app-worker 4    # App Worker 扩到 4（需要上游 Key 总量同步增加）
 ```
 
 扩容后注意 DB 连接数也需要相应增加。
@@ -147,10 +151,12 @@ pm2 logs tesk-worker --lines 50  # 查看 Worker 日志（含内存占用）
 pm2 monit                        # 实时 CPU/内存监控面板
 
 # Redis 队列状态
-redis-cli LLEN "bull:task-processing:wait"     # 等待队列深度
-redis-cli ZCARD "bull:task-processing:active"  # 执行中任务数
-redis-cli LLEN "bull:webhook-delivery:wait"    # Webhook 队列深度
-redis-cli KEYS "upstream:concurrency:*"        # 上游 Key 并发占用
+redis-cli LLEN "bull:task-processing:wait"         # Model 等待队列深度
+redis-cli ZCARD "bull:task-processing:active"      # Model 执行中任务数
+redis-cli LLEN "bull:task-processing-app:wait"     # App 等待队列深度
+redis-cli ZCARD "bull:task-processing-app:active"  # App 执行中任务数
+redis-cli LLEN "bull:webhook-delivery:wait"        # Webhook 队列深度
+redis-cli KEYS "upstream:concurrency:*"            # 上游 Key 并发占用
 ```
 
 Worker 日志中会输出每个任务的内存增量：

@@ -37,13 +37,15 @@ pm2 start ecosystem.config.cjs && pm2 save
 
 ### Multi-Process Architecture (PM2)
 
-Production uses 3 process types controlled by `PROCESS_TYPE` env var:
+Production uses 4 process types controlled by `PROCESS_TYPE` env var:
 - `tesk-api` (1 instance) — Fastify HTTP server, handles API requests
-- `tesk-worker` (10 instances) — BullMQ worker + webhook worker, processes tasks
+- `tesk-worker` (10 instances) — BullMQ Model worker + webhook worker, processes model tasks
+- `tesk-app-worker` (2 instances) — Dedicated BullMQ App worker, processes app tasks with upstream key concurrency control
 - `tesk-timeout` (1 instance) — Periodic timeout checker, marks stuck tasks as FAILED
 
 All processes connect to the same Redis and MySQL. Workers share the BullMQ queue automatically.
-Worker concurrency is configurable via `WORKER_CONCURRENCY` (default 20). Total concurrent tasks = instances × concurrency.
+Model worker concurrency: configurable via `WORKER_CONCURRENCY` (default 20). Total = instances × concurrency.
+App worker concurrency: configurable via `APP_WORKER_CONCURRENCY` (default 4). Total should match upstream key pool size (2 instances × 4 = 8 keys).
 `PROCESS_TYPE=all` starts everything in one process (backward compatible, used by `npm run dev`).
 
 ### Task Lifecycle
@@ -77,7 +79,9 @@ Adding a new handler requires: (1) create file in `handlers/models/` or `handler
 ### Key Patterns
 - All routes are in `src/routes/` — `jobs.ts` for public API, `admin.ts` for management
 - Business logic lives in `src/services/` — `taskService`, `webhook`, `timeoutChecker`
-- Worker concurrency: configurable via `WORKER_CONCURRENCY` (default 20), BullMQ retry: 10 attempts with exponential backoff
+- Worker concurrency: Model worker via `WORKER_CONCURRENCY` (default 20), App worker via `APP_WORKER_CONCURRENCY` (default 4)
+- Model tasks: simple retry (3 attempts, exponential backoff 5s), then fail
+- App tasks: dedicated `task-processing-app` queue, 5 attempts fixed 3s backoff, upstream key borrowing with 429 cooldown
 - Upstream key concurrency: `UpstreamKeyService` uses Redis Lua scripts for atomic borrow/return, prevents over-concurrency across multiple worker processes
 - Webhook delivery: async via dedicated BullMQ queue `webhook-delivery`, 3 retries at 10s/30s/60s delays
 - Timeout checker: marks RUNNING tasks exceeding 30 minutes as FAILED (exactly 1 instance across all processes)
@@ -112,7 +116,8 @@ S3_BUCKET          # Optional, S3 bucket name
 ## Optional Tuning Variables
 
 ```
-WORKER_CONCURRENCY # Worker parallel jobs per process (default 20)
-PROCESS_TYPE       # Process mode: all|api|worker|timeout (default all)
-DATABASE_POOL_LIMIT # Prisma connection pool size (default 30)
+WORKER_CONCURRENCY      # Model Worker parallel jobs per process (default 20)
+APP_WORKER_CONCURRENCY  # App Worker parallel jobs per process (default 4)
+PROCESS_TYPE            # Process mode: all|api|worker|app-worker|timeout (default all)
+DATABASE_POOL_LIMIT     # Prisma connection pool size (default 30)
 ```
