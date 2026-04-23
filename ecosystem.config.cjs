@@ -19,6 +19,7 @@ module.exports = {
         NODE_ENV: 'production',
         PROCESS_TYPE: 'worker',
         WORKER_CONCURRENCY: '20',
+        APP_WORKER_CONCURRENCY: '8',
         DATABASE_POOL_LIMIT: '40',
       },
       max_memory_restart: '2G',

@@ -135,10 +135,11 @@ async function startApiServer() {
 async function startAll() {
   const app = await createApp();
 
-  const { startWorker } = await import("./workers/taskWorker.js");
+  const { startWorker, startAppWorker } = await import("./workers/taskWorker.js");
   const { startTimeoutChecker } = await import("./services/timeoutChecker.js");
 
   const worker = startWorker();
+  startAppWorker();
 
   const { startWebhookWorker } = await import("./workers/webhookWorker.js");
   startWebhookWorker();
@@ -179,13 +180,13 @@ if (processType === "api") {
     process.on("SIGINT", () => gracefulShutdown(undefined, app));
   });
 } else if (processType === "worker") {
-  import("./workers/taskWorker.js").then(({ startWorker }) => {
+  import("./workers/taskWorker.js").then(({ startWorker, startAppWorker }) => {
     import("./workers/webhookWorker.js").then(({ startWebhookWorker }) => {
       const worker = startWorker();
-      const webhookWorker = startWebhookWorker();
+      startAppWorker();
+      startWebhookWorker();
       process.on("SIGTERM", () => gracefulShutdown(worker));
       process.on("SIGINT", () => gracefulShutdown(worker));
-      console.log(`👷 Worker started (concurrency: ${env.workerConcurrency})`);
     });
   });
 } else if (processType === "timeout") {

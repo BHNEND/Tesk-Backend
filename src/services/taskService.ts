@@ -6,6 +6,7 @@ import { availableHandlers } from "../workers/registry.js";
 import { ApiKey } from "@prisma/client";
 
 const taskQueue = createQueue("task-processing");
+const appTaskQueue = createQueue("task-processing-app");
 
 /**
  * 预览任务转换结果（模拟映射，不执行）
@@ -72,16 +73,21 @@ export async function createTask(body: CreateTaskBody, apiKeyData?: ApiKey) {
     },
   });
 
-  // 3. 加入 BullMQ 异步队列
-  await taskQueue.add(taskId, {
+  // 3. 按类型分发到不同队列
+  const isApp = taskType === 'app';
+  const queue = isApp ? appTaskQueue : taskQueue;
+
+  await queue.add(taskId, {
     taskId,
     taskType: taskType,
     identifier: identifier,
     callBackUrl: body.callBackUrl,
     input: body.input,
   }, {
-    attempts: 10,
-    backoff: { type: 'exponential', delay: 5000 },
+    attempts: isApp ? 5 : 3,
+    backoff: isApp
+      ? { type: 'fixed', delay: 3000 }
+      : { type: 'exponential', delay: 5000 },
   });
 
   return { taskId };

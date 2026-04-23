@@ -19,6 +19,7 @@ export const env = {
   s3SecretKey: process.env.S3_SECRET_KEY || "",
   s3Bucket: process.env.S3_BUCKET || "",
   workerConcurrency: parseInt(process.env.WORKER_CONCURRENCY || "20", 10),
+  appWorkerConcurrency: parseInt(process.env.APP_WORKER_CONCURRENCY || "8", 10),
   processType: (process.env.PROCESS_TYPE || "all") as "all" | "api" | "worker" | "timeout",
   databasePoolLimit: parseInt(process.env.DATABASE_POOL_LIMIT || "30", 10),
 };
