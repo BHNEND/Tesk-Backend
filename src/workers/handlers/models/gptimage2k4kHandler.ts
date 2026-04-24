@@ -86,7 +86,7 @@ export const gptimage2k4kHandler: TaskHandler = {
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-    }, 120_000);
+    }, 600_000);
 
     if (!response.ok) {
       const errorText = await response.text();
