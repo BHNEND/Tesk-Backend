@@ -148,7 +148,7 @@ export function startWorker() {
     }
   }, {
     concurrency: env.workerConcurrency,
-    lockDuration: 5 * 60 * 1000,
+    lockDuration: 15 * 60 * 1000,
     maxStalledCount: 2,
   });
 
