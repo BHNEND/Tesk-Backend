@@ -10,9 +10,10 @@ const createTaskSchema = {
     security: [{ BearerAuth: [] }],
     body: {
         type: "object",
-        required: ["callBackUrl", "input"],
+        required: ["callBackUrl", "input", "channel"],
         properties: {
             type: { type: "string", description: "任务类型：model (默认) 或 app", enum: ["model", "app"], default: "model" },
+            channel: { type: "string", description: "渠道：standard 或 economy", enum: ["standard", "economy"] },
             model: { type: "string", description: "模型名称（type 为 model 时必填）", example: "gpt-image-2" },
             appid: { type: "string", description: "应用 ID（type 为 app 时必填）", example: "2040517478593339393" },
             callBackUrl: { type: "string", description: "任务完成后的回调 URL", example: "https://example.com/webhook" },

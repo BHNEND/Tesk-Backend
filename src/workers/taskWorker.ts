@@ -6,37 +6,17 @@ import { getTaskHandlerDynamic, getFallbackHandler } from "./registry.js";
 import { upstreamKeyService } from "../services/upstreamKeyService.js";
 import { env } from "../config/env.js";
 
-function memMB(): number {
-  return Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-}
-
-function memSnapshot() {
-  const m = process.memoryUsage();
-  return {
-    rss: Math.round(m.rss / 1024 / 1024),
-    heapUsed: Math.round(m.heapUsed / 1024 / 1024),
-    heapTotal: Math.round(m.heapTotal / 1024 / 1024),
-    external: Math.round(m.external / 1024 / 1024),
-  };
-}
-
 function isFinalError(job: Job, err: any): boolean {
   const maxAttempts = job.opts.attempts || 1;
   const currentAttempt = job.attemptsMade + 1;
   return currentAttempt >= maxAttempts;
 }
 
-async function handleFinalFailure(taskId: string, err: any, identifier: string, platform: string | undefined, memBefore: number, startTime: number) {
+async function handleFinalFailure(taskId: string, err: any, identifier: string, platform: string | undefined, startTime: number) {
   const costTime = Date.now() - startTime;
-  const memAfter = memMB();
-  const memDelta = memAfter - memBefore;
   const errLower = err.message?.toLowerCase() || "";
 
   console.error(`[Task ${taskId}] Failed: ${err.message}`);
-  console.log(
-    `[MEM] task=${taskId} handler=${platform || 'mock'}/${identifier}` +
-    ` FAILED time=${costTime}ms mem=${memBefore}→${memAfter}MB (${memDelta >= 0 ? '+' : ''}${memDelta}MB)`
-  );
 
   const rawError = {
     message: err.message,
@@ -76,13 +56,9 @@ async function handleFinalFailure(taskId: string, err: any, identifier: string, 
 // ─── Model Worker: 高并发，报错重试几次就放弃 ───
 
 export function startWorker() {
-  setInterval(() => {
-    const m = memSnapshot();
-    console.log(`[MEM] pid=${process.pid} type=model rss=${m.rss}MB heap=${m.heapUsed}/${m.heapTotal}MB`);
-  }, 30_000).unref();
-
   const worker = createWorker("task-processing", async (job: Job) => {
     const { taskId, taskType, identifier, input } = job.data;
+    const channel = job.data.channel || "standard";
 
     await prisma.taskJob.update({
       where: { id: taskId },
@@ -90,7 +66,6 @@ export function startWorker() {
     });
 
     const startTime = Date.now();
-    const memBefore = memMB();
 
     let handler = await getTaskHandlerDynamic(taskType || "model", identifier);
     if (!handler) {
@@ -98,53 +73,149 @@ export function startWorker() {
       handler = getFallbackHandler(taskType || "model");
     }
 
-    try {
-      let upstreamIdentifier: string | undefined;
-      if (taskType === 'app') {
-        const strategy = await prisma.appStrategy.findUnique({ where: { appName: identifier } });
-        upstreamIdentifier = strategy?.appId || identifier;
-      } else {
-        const strategy = await prisma.modelStrategy.findUnique({ where: { modelName: identifier } });
-        upstreamIdentifier = strategy?.modelId || identifier;
+    let upstreamIdentifier: string | undefined;
+    let strategyApiKeys: string[] | null = null;
+    let economyKey: string | null = null;
+
+    if (taskType === 'app') {
+      const strategy = await prisma.appStrategy.findUnique({ where: { appName: identifier } });
+      upstreamIdentifier = strategy?.appId || identifier;
+    } else {
+      const strategy = await prisma.modelStrategy.findUnique({ where: { modelName: identifier } });
+      upstreamIdentifier = strategy?.modelId || identifier;
+      if (strategy?.standardKeys && Array.isArray(strategy.standardKeys) && strategy.standardKeys.length > 0) {
+        strategyApiKeys = strategy.standardKeys as string[];
+      }
+      if (strategy?.economyKey) {
+        economyKey = strategy.economyKey;
+      }
+    }
+
+    const updateProgress = async (progress: number, message: string) => {
+      console.log(`[Task ${taskId} Progress]: ${progress}% - ${message}`);
+    };
+
+    // ─── Economy 渠道：固定 Key，不重试 ───
+    if (channel === "economy") {
+      if (!economyKey) {
+        const err = new Error("Economy channel not available for this model (no economyKey configured)");
+        await handleFinalFailure(taskId, err, identifier, handler.platform, startTime);
+        throw err;
       }
 
-      const result = await handler.execute({
-        taskId,
-        identifier,
-        upstreamIdentifier,
-        input,
-        updateProgress: async (progress: number, message: string) => {
-          console.log(`[Task ${taskId} Progress]: ${progress}% - ${message}`);
-        }
-      });
+      try {
+        const result = await handler.execute({
+          taskId, identifier, upstreamIdentifier, input,
+          allocatedKey: economyKey,
+          updateProgress,
+        });
 
-      const costTime = Date.now() - startTime;
-      const memAfter = memMB();
-      const memDelta = memAfter - memBefore;
+        const costTime = Date.now() - startTime;
+        console.log(`[Task ${taskId}] Economy success via economyKey, cost=${costTime}ms`);
 
-      console.log(
-        `[MEM] task=${taskId} handler=${handler.platform || 'mock'}/${identifier}` +
-        ` time=${costTime}ms mem=${memBefore}→${memAfter}MB (${memDelta >= 0 ? '+' : ''}${memDelta}MB)`
-      );
+        await prisma.taskJob.update({
+          where: { id: taskId },
+          data: { state: "SUCCESS", resultJson: result as any, costTime, completeTime: new Date() },
+        });
 
-      await prisma.taskJob.update({
-        where: { id: taskId },
-        data: {
-          state: "SUCCESS",
-          resultJson: result as any,
-          costTime,
-          completeTime: new Date(),
-        },
-      });
-
-      await enqueueWebhook(taskId);
-    } catch (err: any) {
-      if (isFinalError(job, err)) {
-        await handleFinalFailure(taskId, err, identifier, handler.platform, memBefore, startTime);
-      } else {
-        console.warn(`[Task ${taskId}] Attempt ${job.attemptsMade + 1} failed, retrying: ${err.message}`);
+        await enqueueWebhook(taskId);
+        return;
+      } catch (err: any) {
+        console.warn(`[Task ${taskId}] Economy failed: ${err.message}`);
+        await handleFinalFailure(taskId, err, identifier, handler.platform, startTime);
+        throw err;
       }
+    }
+
+    // ─── Standard 渠道：逐层重试 ───
+    if (!strategyApiKeys || strategyApiKeys.length === 0) {
+      const err = new Error("Standard channel not available for this model (no standardKeys configured)");
+      await handleFinalFailure(taskId, err, identifier, handler.platform, startTime);
       throw err;
+    }
+
+    {
+      const { shouldSkipKey, getCircuitState, recordAttempt, closeCircuit, tripAgain } = await import("../services/circuitBreaker.js");
+
+      const lastErr: any[] = [];
+
+      for (let ki = 0; ki < strategyApiKeys.length; ki++) {
+        const key = strategyApiKeys[ki];
+        const maxRetry = 3 - ki; // Key A=3, Key B=2, Key C=1
+
+        // 检查熔断（open 状态跳过，half-open 允许尝试）
+        const skip = await shouldSkipKey(identifier, ki);
+        if (skip) {
+          console.log(`[Task ${taskId}] Key${ki} circuit open, skipping`);
+          continue;
+        }
+
+        const circuitState = await getCircuitState(identifier, ki);
+        const isHalfOpen = circuitState === "half-open";
+        if (isHalfOpen) {
+          console.log(`[Task ${taskId}] Key${ki} circuit half-open, probing`);
+        }
+
+        console.log(`[Task ${taskId}] Trying Key${ki} (max ${maxRetry} attempts)`);
+
+        for (let attempt = 1; attempt <= maxRetry; attempt++) {
+          try {
+            const result = await handler.execute({
+              taskId, identifier, upstreamIdentifier, input,
+              allocatedKey: key,
+              updateProgress,
+            });
+
+            const costTime = Date.now() - startTime;
+            console.log(`[Task ${taskId}] Success via Key${ki}, cost=${costTime}ms`);
+
+            if (isHalfOpen) {
+              await closeCircuit(identifier, ki);
+            }
+
+            await prisma.taskJob.update({
+              where: { id: taskId },
+              data: { state: "SUCCESS", resultJson: result as any, costTime, completeTime: new Date() },
+            });
+
+            await recordAttempt(identifier, ki, taskId, true);
+            await enqueueWebhook(taskId);
+            return;
+          } catch (err: any) {
+            lastErr.push(err);
+            console.warn(`[Task ${taskId}] Key${ki} attempt ${attempt}/${maxRetry} failed: ${err.message}`);
+
+            // 最后一个 key 的最后一次重试 → 最终失败
+            if (ki === strategyApiKeys.length - 1 && attempt === maxRetry) {
+              await recordAttempt(identifier, ki, taskId, false);
+              if (isHalfOpen) await tripAgain(identifier, ki);
+              await handleFinalFailure(taskId, err, identifier, handler.platform, startTime);
+              throw err;
+            }
+
+            // 当前 key 的最后一次重试 → 记录失败，切下一个 key
+            if (attempt === maxRetry) {
+              await recordAttempt(identifier, ki, taskId, false);
+              if (isHalfOpen) {
+                await tripAgain(identifier, ki);
+              } else {
+                console.log(`[Task ${taskId}] Key${ki} exhausted, switching to Key${ki + 1}`);
+              }
+              break;
+            }
+
+            // 指数退避：1s, 2s, 4s...
+            const delay = Math.pow(2, attempt - 1) * 1000;
+            console.log(`[Task ${taskId}] Key${ki} retry ${attempt} → ${attempt + 1}, backoff ${delay}ms`);
+            await new Promise(r => setTimeout(r, delay));
+          }
+        }
+      }
+
+      // 所有 key 都用完了（可能全部被熔断跳过）
+      const finalErr = lastErr.length > 0 ? lastErr[lastErr.length - 1] : new Error("All keys circuit-broken");
+      await handleFinalFailure(taskId, finalErr, identifier, handler.platform, startTime);
+      throw finalErr;
     }
   }, {
     concurrency: env.workerConcurrency,
@@ -167,11 +238,6 @@ export function startWorker() {
 // ─── App Worker: 低并发 = 上游 Key 总量，队列自然排队 ───
 
 export function startAppWorker() {
-  setInterval(() => {
-    const m = memSnapshot();
-    console.log(`[MEM] pid=${process.pid} type=app rss=${m.rss}MB heap=${m.heapUsed}/${m.heapTotal}MB`);
-  }, 30_000).unref();
-
   const worker = createWorker("task-processing-app", async (job: Job) => {
     const { taskId, identifier, input } = job.data;
 
@@ -181,7 +247,6 @@ export function startAppWorker() {
     });
 
     const startTime = Date.now();
-    const memBefore = memMB();
 
     let handler = await getTaskHandlerDynamic("app", identifier);
     if (!handler) {
@@ -215,13 +280,7 @@ export function startAppWorker() {
       });
 
       const costTime = Date.now() - startTime;
-      const memAfter = memMB();
-      const memDelta = memAfter - memBefore;
-
-      console.log(
-        `[MEM] task=${taskId} handler=${handler.platform || 'mock'}/${identifier}` +
-        ` time=${costTime}ms mem=${memBefore}→${memAfter}MB (${memDelta >= 0 ? '+' : ''}${memDelta}MB)`
-      );
+      console.log(`[Task ${taskId}] App task success, cost=${costTime}ms`);
 
       await prisma.taskJob.update({
         where: { id: taskId },
@@ -244,7 +303,7 @@ export function startAppWorker() {
       }
 
       if (isFinalError(job, err)) {
-        await handleFinalFailure(taskId, err, identifier, handler.platform, memBefore, startTime);
+        await handleFinalFailure(taskId, err, identifier, handler.platform, startTime);
       } else {
         console.warn(`[Task ${taskId}] Attempt ${job.attemptsMade + 1} failed, retrying: ${err.message}`);
       }

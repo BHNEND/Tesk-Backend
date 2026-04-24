@@ -49,9 +49,11 @@ App worker concurrency: configurable via `APP_WORKER_CONCURRENCY` (default 4). T
 `PROCESS_TYPE=all` starts everything in one process (backward compatible, used by `npm run dev`).
 
 ### Task Lifecycle
-1. Client calls `POST /api/v1/jobs/createTask` with Bearer token (ApiKey table)
-2. `taskService` creates a `TaskJob` row (PENDING) and enqueues to BullMQ
-3. Worker picks up job → resolves handler → sets state to RUNNING
+1. Client calls `POST /api/v1/jobs/createTask` with Bearer token (ApiKey table) and `channel` field (`standard` or `economy`)
+2. `taskService` creates a `TaskJob` row (PENDING, with channel) and enqueues to BullMQ (economy: 1 attempt, standard: 3 attempts)
+3. Worker picks up job → resolves handler and strategy → checks channel:
+   - `economy`: execute once with `economyKey`, no retry
+   - `standard`: multi-key retry with circuit breaker (Key A: 3 attempts, Key B: 2, Key C: 1, exponential backoff)
 4. Handler executes business logic (may call external APIs, poll for results)
 5. On completion: update DB (SUCCESS/FAILED), enqueue webhook to `webhook-delivery` queue
 6. Webhook worker delivers callback to `callBackUrl` (3 retries)
@@ -80,7 +82,10 @@ Adding a new handler requires: (1) create file in `handlers/models/` or `handler
 - All routes are in `src/routes/` — `jobs.ts` for public API, `admin.ts` for management
 - Business logic lives in `src/services/` — `taskService`, `webhook`, `timeoutChecker`
 - Worker concurrency: Model worker via `WORKER_CONCURRENCY` (default 20), App worker via `APP_WORKER_CONCURRENCY` (default 4)
-- Model tasks: simple retry (3 attempts, exponential backoff 5s), then fail
+- Model tasks: dual-channel pricing — `channel` field required in request body
+  - `standard`: multi-key retry with circuit breaker (1-3 keys in `standardKeys`, exponential backoff)
+  - `economy`: single key (`economyKey`), no retry, fail-fast
+- Strategy must have corresponding keys configured (`standardKeys` for standard, `economyKey` for economy), otherwise task fails
 - App tasks: dedicated `task-processing-app` queue, 5 attempts fixed 3s backoff, upstream key borrowing with 429 cooldown
 - Upstream key concurrency: `UpstreamKeyService` uses Redis Lua scripts for atomic borrow/return, prevents over-concurrency across multiple worker processes
 - Webhook delivery: async via dedicated BullMQ queue `webhook-delivery`, 3 retries at 10s/30s/60s delays
@@ -121,3 +126,48 @@ APP_WORKER_CONCURRENCY  # App Worker parallel jobs per process (default 4)
 PROCESS_TYPE            # Process mode: all|api|worker|app-worker|timeout (default all)
 DATABASE_POOL_LIMIT     # Prisma connection pool size (default 30)
 ```
+
+## Circuit Breaker (Standard Channel Only)
+
+Per-model-per-key circuit breaker, implemented in `src/services/circuitBreaker.ts`:
+- **State machine**: closed → open → half-open → closed/open
+- **Trip condition**: 10-min window, ≥ 30 tasks, success rate < 30%
+- **Open state**: skip key for 5-min cooldown
+- **Half-open**: after cooldown, allow one full retry cycle; success → close (clear records), failure → re-trip
+- Redis keys: `cb:{model}:key{index}:tasks` (Sorted Set), `cb:{model}:key{index}:state`, `cb:{model}:key{index}:tripped`
+
+## Public API: createTask
+
+```
+POST /api/v1/jobs/createTask
+Authorization: Bearer {api_key}
+Content-Type: application/json
+
+{
+  "model": "gpt-image-2",           // required, model identifier
+  "channel": "standard",            // required, "standard" | "economy"
+  "callBackUrl": "https://...",     // required, webhook callback URL
+  "progressCallBackUrl": "https://...", // optional
+  "input": {                        // required
+    "prompt": "A beautiful sunset", // required
+    "image_urls": [],               // optional
+    "aspect_ratio": "1:1",          // optional
+    "resolution": "1k",             // optional
+    "extra": {}                     // optional, handler-specific params
+  }
+}
+```
+
+**channel 字段说明：**
+- `"standard"` — 标准版，使用策略配置的 `standardKeys`（1-3 个 Key），逐层重试 + 熔断保护，保证最大成功率
+- `"economy"` — 经济版，使用策略配置的 `economyKey`（单 Key），不重试，失败即失败，成本低
+
+**错误响应：**
+- `400` channel 字段必填
+- `400` 策略未配置对应渠道的 Key（standard 需要 standardKeys，economy 需要 economyKey）
+
+## Model Strategy Key Configuration
+
+Admin UI (`/admin/` → 策略管理 → 模型策略) 中每个策略可配置：
+- **标准版Key**（`standardKeys`）：1-3 个 API Key，按低价→高价排列，逐层重试（Key A: 3次, Key B: 2次, Key C: 1次）
+- **经济版Key**（`economyKey`）：单个 API Key，用于 economy 渠道

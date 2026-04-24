@@ -188,13 +188,19 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.post("/api/v1/admin/strategies/models", hidden, async (request, reply) => {
-    const { modelName, modelId, handler, remark } = request.body as any;
+    const { modelName, modelId, handler, remark, standardKeys, economyKey } = request.body as any;
     if (!modelName || !handler) {
       return reply.status(400).send({ code: 400, msg: "Missing required fields" });
     }
+    let validKeys: string[] | undefined;
+    if (Array.isArray(standardKeys) && standardKeys.length > 0) {
+      validKeys = standardKeys.filter((k: string) => typeof k === "string" && k.trim()).map((k: string) => k.trim());
+      if (validKeys.length === 0) validKeys = undefined;
+      if (validKeys! && validKeys!.length > 3) return reply.status(400).send({ code: 400, msg: "standardKeys max 3 keys" });
+    }
     try {
       const created = await prisma.modelStrategy.create({
-        data: { modelName, modelId: modelId || null, handler, remark: remark || null },
+        data: { modelName, modelId: modelId || null, handler, remark: remark || null, standardKeys: validKeys || undefined, economyKey: economyKey || null },
       });
       return reply.send({ code: 200, msg: "success", data: created });
     } catch (err: any) {
@@ -205,7 +211,24 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { id: string }, Body: any }>("/api/v1/admin/strategies/models/:id", hidden, async (request, reply) => {
     const { id } = request.params;
-    const { config, ...data } = request.body as any;
+    const { config, standardKeys, economyKey, ...data } = request.body as any;
+
+    // 验证 standardKeys
+    if (standardKeys !== undefined) {
+      if (standardKeys === null || (Array.isArray(standardKeys) && standardKeys.length === 0)) {
+        data.standardKeys = null;
+      } else if (Array.isArray(standardKeys)) {
+        const validKeys = standardKeys.filter((k: string) => typeof k === "string" && k.trim()).map((k: string) => k.trim());
+        if (validKeys! && validKeys!.length > 3) return reply.status(400).send({ code: 400, msg: "standardKeys max 3 keys" });
+        data.standardKeys = validKeys.length > 0 ? validKeys : null;
+      }
+    }
+
+    // 验证 economyKey
+    if (economyKey !== undefined) {
+      data.economyKey = typeof economyKey === "string" && economyKey.trim() ? economyKey.trim() : null;
+    }
+
     try {
       const updated = await prisma.modelStrategy.update({
         where: { id },
@@ -268,5 +291,23 @@ export async function adminRoutes(app: FastifyInstance) {
     } catch {
       return reply.status(404).send({ code: 404, msg: "Strategy not found" });
     }
+  });
+
+  // ─── 熔断器管理 ───
+
+  app.get("/api/v1/admin/circuit-breaker", hidden, async (request, reply) => {
+    const { getAllCircuitStates } = await import("../services/circuitBreaker.js");
+    const states = await getAllCircuitStates();
+    return reply.send({ code: 200, msg: "success", data: states });
+  });
+
+  app.post<{ Body: { modelName: string; keyIndex: number } }>("/api/v1/admin/circuit-breaker/reset", hidden, async (request, reply) => {
+    const { modelName, keyIndex } = request.body as any;
+    if (!modelName || keyIndex === undefined) {
+      return reply.status(400).send({ code: 400, msg: "Missing modelName or keyIndex" });
+    }
+    const { resetCircuit } = await import("../services/circuitBreaker.js");
+    await resetCircuit(modelName, Number(keyIndex));
+    return reply.send({ code: 200, msg: "success" });
   });
 }

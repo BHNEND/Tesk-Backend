@@ -4,12 +4,14 @@ import { ShieldCheck, ShieldAlert, Plus, Trash2, Cpu, Box, Edit2 } from 'lucide-
 
 interface Strategy {
   id: string;
-  identifier: string;       // modelName or appName
-  upstreamId: string;       // modelId or appId (上游真实 ID)
+  identifier: string;
+  upstreamId: string;
   handler: string;
   remark: string;
   status: string;
   config?: any;
+  standardKeys?: string[];
+  economyKey?: string;
   createdAt: string;
 }
 
@@ -31,6 +33,8 @@ export default function StrategyManage() {
   const [handler, setHandler] = useState(MODEL_HANDLERS[0]);
   const [remark, setRemark] = useState('');
   const [config, setConfig] = useState('');
+  const [apiKeys, setApiKeys] = useState<string[]>([]);
+  const [economyKey, setEconomyKey] = useState('');
 
   const fetch = () => {
     setLoading(true);
@@ -45,6 +49,8 @@ export default function StrategyManage() {
         remark: item.remark || '',
         status: item.status,
         config: item.config,
+        standardKeys: item.standardKeys || [],
+        economyKey: tab === 'model' ? (item as any).economyKey || '' : '',
         createdAt: item.createdAt
       })));
     }).catch(console.error).finally(() => setLoading(false));
@@ -64,6 +70,8 @@ export default function StrategyManage() {
     setHandler((tab === 'model' ? MODEL_HANDLERS : APP_HANDLERS)[0]);
     setRemark('');
     setConfig('');
+    setApiKeys([]);
+    setEconomyKey('');
   };
 
   const handleEdit = (item: Strategy) => {
@@ -73,6 +81,8 @@ export default function StrategyManage() {
     setHandler(item.handler);
     setRemark(item.remark);
     setConfig(item.config ? JSON.stringify(item.config, null, 2) : '');
+    setApiKeys(tab === 'model' ? (item.standardKeys || []) : []);
+    setEconomyKey(tab === 'model' ? (item as any).economyKey || '' : '');
     setShowForm(true);
   };
 
@@ -95,6 +105,8 @@ export default function StrategyManage() {
             modelId: upstreamId.trim() || null,
             handler,
             remark: remark.trim(),
+            standardKeys: apiKeys.filter(k => k.trim()).length > 0 ? apiKeys.filter(k => k.trim()) : null,
+            economyKey: economyKey.trim() || null,
           }
         : {
             appName: identifier.trim(),
@@ -235,6 +247,63 @@ export default function StrategyManage() {
             </div>
           </div>
 
+          {tab === 'model' && (
+            <div className="space-y-2 mb-4">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between">
+                <span>经济版Key（单Key策略）</span>
+                <span className="text-blue-500 font-normal normal-case">不配则该模型不支持 Economy 渠道</span>
+              </label>
+              <input
+                type="text"
+                value={economyKey}
+                onChange={(e) => setEconomyKey(e.target.value)}
+                placeholder="低价渠道专用 API Key"
+                className="w-full border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
+              />
+            </div>
+          )}
+
+          {tab === 'model' && (
+            <div className="space-y-2 mb-4">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between">
+                <span>标准版Key（逐层重试策略）</span>
+                <span className="text-blue-500 font-normal normal-case">留空则使用环境变量默认 Key</span>
+              </label>
+              {apiKeys.map((key, idx) => (
+                <div key={idx} className="flex gap-2 items-center">
+                  <span className="text-xs text-slate-400 w-12 shrink-0">Key {idx + 1}</span>
+                  <input
+                    type="text"
+                    value={key}
+                    onChange={(e) => {
+                      const next = [...apiKeys];
+                      next[idx] = e.target.value;
+                      setApiKeys(next);
+                    }}
+                    placeholder={`API Key ${idx + 1}`}
+                    className="flex-1 border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
+                  />
+                  {apiKeys.length > 1 && (
+                    <button
+                      onClick={() => setApiKeys(apiKeys.filter((_, i) => i !== idx))}
+                      className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {apiKeys.length < 3 && (
+                <button
+                  onClick={() => setApiKeys([...apiKeys, ''])}
+                  className="text-blue-600 text-xs font-medium hover:bg-blue-50 px-3 py-1.5 rounded-lg transition"
+                >
+                  + 添加 Key
+                </button>
+              )}
+            </div>
+          )}
+
           {(tab === 'app' || (tab === 'model' && editingId)) && handler === 'runningHubHandler' && (
             <div className="space-y-2 mb-4">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between">
@@ -299,6 +368,16 @@ export default function StrategyManage() {
                       {k.config && (
                         <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700 font-normal">
                           已配置节点
+                        </span>
+                      )}
+                      {tab === 'model' && k.standardKeys && k.standardKeys.length > 0 && (
+                        <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700 font-normal">
+                          {k.standardKeys.length} Key{k.standardKeys.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {tab === 'model' && (k as any).economyKey && (
+                        <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-green-100 text-green-700 font-normal">
+                          Economy
                         </span>
                       )}
                     </td>

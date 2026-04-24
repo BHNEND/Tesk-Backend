@@ -57,6 +57,7 @@ export async function createTask(body: CreateTaskBody, apiKeyData?: ApiKey) {
 
   const taskId = `task_${uuidv4()}`;
   const taskType = body.type || 'model';
+  const channel = (body as any).channel || 'standard';
   const identifier = taskType === 'app' ? (body as any).appid : (body as any).model;
 
   // 2. 创建持久化记录 (并关联 API Key ID)
@@ -65,6 +66,7 @@ export async function createTask(body: CreateTaskBody, apiKeyData?: ApiKey) {
       id: taskId,
       apiKeyId: apiKeyData?.id,
       taskType: taskType,
+      channel,
       model: taskType === 'model' ? identifier : null,
       appid: taskType === 'app' ? identifier : null,
       param: body.input as any,
@@ -77,14 +79,17 @@ export async function createTask(body: CreateTaskBody, apiKeyData?: ApiKey) {
   const isApp = taskType === 'app';
   const queue = isApp ? appTaskQueue : taskQueue;
 
+  const isEconomy = channel === 'economy';
+
   await queue.add(taskId, {
     taskId,
     taskType: taskType,
     identifier: identifier,
+    channel,
     callBackUrl: body.callBackUrl,
     input: body.input,
   }, {
-    attempts: isApp ? 5 : 3,
+    attempts: isApp ? 5 : (isEconomy ? 1 : 3),
     backoff: isApp
       ? { type: 'fixed', delay: 3000 }
       : { type: 'exponential', delay: 5000 },

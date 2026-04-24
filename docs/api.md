@@ -84,8 +84,9 @@ Content-Type: application/json
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `type` | string | ❌ | 任务类型：`model` (默认) 或 `app` |
-| `model` | string | 条件 | 当 `type` 为 `model` 时必填。模型名称（如 `"flux-kontext"`） |
-| `appid` | string | 条件 | 当 `type` 为 `app` 时必填。应用 ID（如 `"12345"`） |
+| `model` | string | 条件 | 当 `type` 为 `model` 时必填。模型名称（见下方可用模型列表） |
+| `appid` | string | 条件 | 当 `type` 为 `app` 时必填。应用 ID |
+| `channel` | string | ✅ | 渠道：`"standard"` 或 `"economy"` |
 | `callBackUrl` | string | ✅ | 任务完成后的回调 URL |
 | `progressCallBackUrl` | string | ❌ | 进度回调 URL |
 | `input` | object | ✅ | 任务输入参数（详见下方 StandardTaskInput） |
@@ -103,12 +104,13 @@ Content-Type: application/json
 | `duration` | number | 时长（秒） |
 | `extra` | object | 扩展参数，用于透传特定 Handler 所需的非标准字段 |
 
-**请求示例 (Model 任务)：**
+**请求示例 (Model 任务 - 标准版)：**
 
 ```json
 {
   "type": "model",
-  "model": "flux-kontext",
+  "model": "gpt-image-2",
+  "channel": "standard",
   "callBackUrl": "https://example.com/webhook",
   "input": {
     "prompt": "A beautiful sunset",
@@ -116,6 +118,30 @@ Content-Type: application/json
   }
 }
 ```
+
+**请求示例 (Model 任务 - 经济版)：**
+
+```json
+{
+  "type": "model",
+  "model": "gpt-image-2",
+  "channel": "economy",
+  "callBackUrl": "https://example.com/webhook",
+  "input": {
+    "prompt": "A beautiful sunset",
+    "aspect_ratio": "16:9"
+  }
+}
+```
+
+**channel 字段说明：**
+
+| 渠道 | 说明 | 重试策略 |
+|------|------|----------|
+| `standard` | 标准版，使用策略配置的标准版Key（1-3 个），逐层重试 + 熔断保护 | Key A: 3次, Key B: 2次, Key C: 1次，指数退避 |
+| `economy` | 经济版，使用策略配置的经济版Key（单 Key），不重试 | 失败即失败，无重试 |
+
+> 策略必须在管理后台配置对应渠道的 Key，否则返回错误。
 
 **请求示例 (App 任务 - RunningHub)：**
 
@@ -154,6 +180,45 @@ Content-Type: application/json
   "msg": "Missing required fields: model, callBackUrl, input.prompt"
 }
 ```
+
+---
+
+### 1.1 可用模型列表
+
+| model 名称 | 处理器 (Handler) | 上游模型 ID | 说明 |
+|-------------|------------------|-------------|------|
+| `gpt-image-2` | gptimage2 | gpt-image-2-all | GPT Image 2 文生图模型 |
+| `gpt-image-2-edie` | gptimageEdit | gpt-image-2-all | GPT Image 2 图像编辑模型 |
+| `gpt-image-2-4k` | gptimage2k4k | gpt-image-2 | GPT Image 2 4K 分辨率模型 |
+| `nano-banana` | yunwubanana | gemini-2.5-flash-image | 香蕉初代模型 (Gemini Flash) |
+| `nano-banana-pro` | yunwubananapro | gemini-3-pro-image-preview | 香蕉 Pro 模型 (Gemini Pro) |
+| `nano-banana-2` | yunwubanana2 | gemini-3.1-flash-image-preview | 香蕉 v2 模型 (Gemini Flash 3.1) |
+| `mock-test-model` | defaultModelHandler | - | 测试用 Mock 模型 |
+
+> 模型列表可通过 `GET /api/v1/jobs/models` 接口实时查询。
+
+---
+
+### 1.2 各模型支持的 input 参数
+
+#### GPT Image 系列 (`gpt-image-2`, `gpt-image-2-edie`, `gpt-image-2-4k`)
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `prompt` | string | 提示词（必填） |
+| `aspect_ratio` | string | 宽高比：`1:1` `2:3` `3:2` `auto`（默认 auto） |
+| `resolution` | string | 分辨率：`1k` `2k` `4k`（默认 1k，仅 `gpt-image-2-4k` 支持 4k） |
+| `image_urls` | string[] | 参考图片 URL（仅 `gpt-image-2-edie` 编辑模式） |
+| `extra.n` | number | 生成数量 1-10（默认 1） |
+
+#### 香蕉系列 (`nano-banana`, `nano-banana-pro`, `nano-banana-2`)
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `prompt` | string | 提示词（必填） |
+| `aspect_ratio` | string | 宽高比：`1:1` `2:3` `3:2` `3:4` `4:3` `4:5` `5:4` `9:16` `16:9` `21:9` `auto` |
+| `resolution` | string | 分辨率：`1k` `2k` `4k`（默认 1k） |
+| `image_urls` | string[] | 参考图片 URL（最多 14 张） |
 
 ---
 
@@ -434,7 +499,118 @@ GET /api/v1/admin/apikeys
 
 ---
 
-### 6. 更新 API Key
+### 6. 模型策略列表
+
+```
+GET /api/v1/admin/strategies/models
+```
+
+**成功响应（200）：**
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": [
+    {
+      "id": "uuid",
+      "modelName": "gpt-image-2",
+      "modelId": "gpt-image-2-all",
+      "handler": "gptimage2",
+      "standardKeys": ["sk-xxx", "sk-yyy"],
+      "economyKey": "sk-zzz",
+      "status": "active",
+      "remark": "GPT Image 2 文生图模型",
+      "createdAt": "2026-04-22T12:06:54.171Z",
+      "updatedAt": "2026-04-25T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### 7. 创建模型策略
+
+```
+POST /api/v1/admin/strategies/models
+```
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `modelName` | string | ✅ | 客户端传的模型名称（唯一） |
+| `modelId` | string | ❌ | 上游真实模型 ID，不填则用 modelName |
+| `handler` | string | ✅ | 处理器标识（如 `gptimage2`） |
+| `remark` | string | ❌ | 备注 |
+| `standardKeys` | string[] | ❌ | 标准版 Key（1-3 个，低价→高价排列） |
+| `economyKey` | string | ❌ | 经济版 Key（单个） |
+
+---
+
+### 8. 更新模型策略
+
+```
+PATCH /api/v1/admin/strategies/models/:id
+```
+
+**请求参数：** 同创建，所有字段可选。
+
+---
+
+### 9. 删除模型策略
+
+```
+DELETE /api/v1/admin/strategies/models/:id
+```
+
+---
+
+### 10. 应用策略接口
+
+与模型策略类似，路径为 `/api/v1/admin/strategies/apps`，支持 GET/POST/PATCH/DELETE。
+
+---
+
+### 11. 熔断器状态
+
+```
+GET /api/v1/admin/circuit-breaker
+```
+
+**成功响应（200）：**
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "gpt-image-2": [
+      { "keyIndex": 0, "state": "closed", "total": 45, "successes": 38 }
+    ]
+  }
+}
+```
+
+---
+
+### 12. 重置熔断器
+
+```
+POST /api/v1/admin/circuit-breaker/reset
+```
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `modelName` | string | ✅ | 模型名称 |
+| `keyIndex` | number | ✅ | Key 索引（0, 1, 2） |
+
+---
+
+### 13. 更新 API Key
 
 ```
 PATCH /api/v1/admin/apikeys/:id

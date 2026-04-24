@@ -36,7 +36,7 @@ export const yunwubanana2Handler: TaskHandler = {
 
   async execute(ctx: TaskHandlerContext): Promise<any> {
     const input = ctx.input || {};
-    const apiKey = env.geminiApiKey;
+    const apiKey = ctx.allocatedKey || env.geminiApiKey;
     if (!apiKey) throw new Error("Missing GEMINI_API_KEY in environment variables");
 
     const upstreamId = ctx.upstreamIdentifier || ctx.identifier || DEFAULT_MODEL;

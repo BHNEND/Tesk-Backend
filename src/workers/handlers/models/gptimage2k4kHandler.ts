@@ -63,7 +63,7 @@ export const gptimage2k4kHandler: TaskHandler = {
   async execute(ctx: TaskHandlerContext): Promise<any> {
     const input = ctx.input || {};
     const resolution = String(input.resolution || "2k").trim();
-    const apiKey = env.gptImage2ApiKey;
+    const apiKey = ctx.allocatedKey || env.gptImage2ApiKey;
 
     if (!apiKey) {
       throw new Error("Missing GPTIMAGE2_API_KEY in environment variables");
