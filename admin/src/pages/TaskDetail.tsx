@@ -23,6 +23,7 @@ export default function TaskDetail() {
   const fields: [string, string][] = [
     ['Task ID', 'id'],
     ['模型', 'model'],
+    ['渠道', 'channel'],
     ['状态', 'state'],
     ['回调 URL', 'callBackUrl'],
     ['进度回调 URL', 'progressCallBackUrl'],
@@ -56,6 +57,14 @@ export default function TaskDetail() {
             <span className="text-sm">
               {key === 'state' ? (
                 <StatusBadge state={String(task[key] || '')} />
+              ) : key === 'channel' ? (
+                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
+                  task[key] === 'economy'
+                    ? 'bg-green-50 text-green-700 border border-green-100'
+                    : 'bg-blue-50 text-blue-700 border border-blue-100'
+                }`}>
+                  {task[key] === 'economy' ? '经济版' : '标准版'}
+                </span>
               ) : key === 'costTime' && task[key] != null ? (
                 `${(Number(task[key]) / 1000).toFixed(1)}s`
               ) : (

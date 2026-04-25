@@ -95,7 +95,7 @@ export function startWorker() {
       console.log(`[Task ${taskId} Progress]: ${progress}% - ${message}`);
     };
 
-    // ─── Economy 渠道：固定 Key，不重试 ───
+    // ─── Economy 渠道：固定 Key，3 次指数退避重试 ───
     if (channel === "economy") {
       if (!economyKey) {
         const err = new Error("Economy channel not available for this model (no economyKey configured)");
@@ -103,27 +103,37 @@ export function startWorker() {
         throw err;
       }
 
-      try {
-        const result = await handler.execute({
-          taskId, identifier, upstreamIdentifier, input,
-          allocatedKey: economyKey,
-          updateProgress,
-        });
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const result = await handler.execute({
+            taskId, identifier, upstreamIdentifier, input,
+            allocatedKey: economyKey,
+            updateProgress,
+          });
 
-        const costTime = Date.now() - startTime;
-        console.log(`[Task ${taskId}] Economy success via economyKey, cost=${costTime}ms`);
+          const costTime = Date.now() - startTime;
+          console.log(`[Task ${taskId}] Economy success via economyKey, cost=${costTime}ms`);
 
-        await prisma.taskJob.update({
-          where: { id: taskId },
-          data: { state: "SUCCESS", resultJson: result as any, costTime, completeTime: new Date() },
-        });
+          await prisma.taskJob.update({
+            where: { id: taskId },
+            data: { state: "SUCCESS", resultJson: result as any, costTime, completeTime: new Date() },
+          });
 
-        await enqueueWebhook(taskId);
-        return;
-      } catch (err: any) {
-        console.warn(`[Task ${taskId}] Economy failed: ${err.message}`);
-        await handleFinalFailure(taskId, err, identifier, handler.platform, startTime);
-        throw err;
+          await enqueueWebhook(taskId);
+          return;
+        } catch (err: any) {
+          console.warn(`[Task ${taskId}] Economy attempt ${attempt}/${maxAttempts} failed: ${err.message}`);
+
+          if (attempt === maxAttempts) {
+            await handleFinalFailure(taskId, err, identifier, handler.platform, startTime);
+            throw err;
+          }
+
+          const delay = Math.pow(2, attempt - 1) * 1000;
+          console.log(`[Task ${taskId}] Economy retry ${attempt} → ${attempt + 1}, backoff ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+        }
       }
     }
 
@@ -175,7 +185,7 @@ export function startWorker() {
 
             await prisma.taskJob.update({
               where: { id: taskId },
-              data: { state: "SUCCESS", resultJson: result as any, costTime, completeTime: new Date() },
+              data: { state: "SUCCESS", resultJson: result as any, costTime, completeTime: new Date(), usedKeyIndex: ki },
             });
 
             await recordAttempt(identifier, ki, taskId, true);

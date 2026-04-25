@@ -55,7 +55,10 @@ const previewTaskSchema = {
     description: "预览任务参数映射结果，不实际执行",
     tags: ["任务接口"],
     security: [{ BearerAuth: [] }],
-    body: createTaskSchema.body,
+    body: {
+        ...createTaskSchema.body,
+        required: ["callBackUrl", "input"],
+    },
     response: {
         200: {
             type: "object",

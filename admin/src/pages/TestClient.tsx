@@ -36,6 +36,7 @@ const GEMINI_IMAGE_TEMPLATE = {
 
 export default function TestClient() {
   const [taskType, setTaskType] = useState<'model' | 'app'>('app');
+  const [channel, setChannel] = useState<'standard' | 'economy'>('standard');
   const [identifier, setIdentifier] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [callbackUrl, setCallbackUrl] = useState('https://webhook.site/test');
@@ -97,7 +98,7 @@ export default function TestClient() {
     setSubmitRes(null);
     setPreviewData(null);
     try {
-      const payload: any = { type: taskType, callBackUrl: callbackUrl, input };
+      const payload: any = { type: taskType, callBackUrl: callbackUrl, input, channel };
       if (taskType === 'app') payload.appid = identifier;
       else payload.model = identifier;
 
@@ -234,18 +235,26 @@ export default function TestClient() {
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{taskType === 'app' ? 'App Name (应用名称)' : 'Model Name (模型名称)'}</label>
-                  {optionsEmpty ? (
-                    <input type="text" value={identifier} onChange={e => setIdentifier(e.target.value)} placeholder={taskType === 'model' ? "暂无模型策略，手动输入" : "暂无应用策略，手动输入"} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition" />
-                  ) : (
-                    <select value={identifier} onChange={e => setIdentifier(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none transition" >
-                      {taskType === 'model'
-                        ? modelOptions.map((m: any) => <option key={m.modelName} value={m.modelName}>{m.modelName}</option>)
-                        : appOptions.map((a: any) => <option key={a.appName || a.appid} value={a.appName || a.appid}>{a.appName || a.appid}</option>)
-                      }
-                    </select>
-                  )}
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">渠道 (Channel)</label>
+                  <select value={channel} onChange={e => setChannel(e.target.value as any)} disabled={taskType === 'app'} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none transition disabled:opacity-50 disabled:cursor-not-allowed" >
+                    <option value="standard">标准版 (Standard)</option>
+                    <option value="economy">经济版 (Economy)</option>
+                  </select>
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{taskType === 'app' ? 'App Name (应用名称)' : 'Model Name (模型名称)'}</label>
+                {optionsEmpty ? (
+                  <input type="text" value={identifier} onChange={e => setIdentifier(e.target.value)} placeholder={taskType === 'model' ? "暂无模型策略，手动输入" : "暂无应用策略，手动输入"} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition" />
+                ) : (
+                  <select value={identifier} onChange={e => setIdentifier(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none transition" >
+                    {taskType === 'model'
+                      ? modelOptions.map((m: any) => <option key={m.modelName} value={m.modelName}>{m.modelName}</option>)
+                      : appOptions.map((a: any) => <option key={a.appName || a.appid} value={a.appName || a.appid}>{a.appName || a.appid}</option>)
+                    }
+                  </select>
+                )}
               </div>
 
               <div className="space-y-1.5">

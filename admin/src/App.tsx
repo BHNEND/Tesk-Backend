@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
+import Analytics from './pages/Analytics';
 import TaskList from './pages/TaskList';
 import TaskDetail from './pages/TaskDetail';
 import ApiKeyList from './pages/ApiKeyList';
@@ -32,6 +33,7 @@ function App() {
           </ProtectedRoute>
         }>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/analytics" element={<Analytics />} />
           <Route path="/tasks" element={<TaskList />} />
           <Route path="/tasks/:taskId" element={<TaskDetail />} />
           <Route path="/strategies" element={<StrategyManage />} />

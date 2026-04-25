@@ -15,6 +15,7 @@ model TaskJob {
   model               String?  @db.VarChar(100)
   appid               String?  @db.VarChar(100)
   channel             String   @default("standard") @db.VarChar(20) // economy=低价渠道, standard=标准版
+  usedKeyIndex        Int?     // 标准渠道成功时使用的 Key 层级 (0=KeyA, 1=KeyB, 2=KeyC)
   state               String   @default("PENDING") @db.VarChar(20)
   param               Json
   resultJson          Json?

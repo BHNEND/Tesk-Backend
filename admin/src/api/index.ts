@@ -53,6 +53,19 @@ export const createAppStrategy = (data: any) => api.post('/strategies/apps', dat
 export const updateAppStrategy = (id: string, data: any) => api.patch(`/strategies/apps/${id}`, data);
 export const deleteAppStrategy = (id: string) => api.delete(`/strategies/apps/${id}`);
 
+// Analytics
+export const getAnalytics = (params?: { startDate?: string; endDate?: string }) => api.get('/analytics', { params });
+export const getAnalyticsTimeline = (params?: { startDate?: string; endDate?: string; interval?: string }) => api.get('/analytics/timeline', { params });
+export const getAnalyticsErrors = (params?: { startDate?: string; endDate?: string }) => api.get('/analytics/errors', { params });
+export const getAnalyticsPerformance = (params?: { startDate?: string; endDate?: string }) => api.get('/analytics/performance', { params });
+export const getQueueStats = () => api.get('/queue-stats');
+export const getAnalyticsApps = (params?: { startDate?: string; endDate?: string }) => api.get('/analytics/apps', { params });
+export const getAnalyticsDuration = (params?: { startDate?: string; endDate?: string }) => api.get('/analytics/duration', { params });
+export const getAnalyticsCostByTier = (params?: { startDate?: string; endDate?: string }) => api.get('/analytics/cost-by-tier', { params });
+export const getAnalyticsCostTimeline = (params?: { startDate?: string; endDate?: string }) => api.get('/analytics/cost-timeline', { params });
+export const getAnalyticsModelDetail = (params: { model: string; startDate?: string; endDate?: string }) => api.get('/analytics/model-detail', { params });
+export const getSystemStats = () => api.get('/system-stats');
+
 // --- Public Job APIs (针对测试客户端使用) ---
 const publicApi = axios.create({
   baseURL: '/api/v1/jobs',

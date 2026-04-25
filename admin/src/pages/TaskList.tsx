@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getTasks } from '../api';
 import StatusBadge from '../components/StatusBadge';
 import { Search, Filter, RefreshCcw, ChevronLeft, ChevronRight, ExternalLink, Eye, X } from 'lucide-react';
@@ -7,6 +7,7 @@ import { Search, Filter, RefreshCcw, ChevronLeft, ChevronRight, ExternalLink, Ey
 interface Task {
   id: string;
   taskType?: string;
+  channel?: string;
   model: string | null;
   appid: string | null;
   state: string;
@@ -20,11 +21,14 @@ const states = ['全部状态', 'PENDING', 'RUNNING', 'SUCCESS', 'FAILED'];
 
 export default function TaskList() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [stateFilter, setStateFilter] = useState('全部状态');
+  const initialState = searchParams.get('state') || '全部状态';
+  const [stateFilter, setStateFilter] = useState(initialState);
   const [loading, setLoading] = useState(true);
+  const [searchId, setSearchId] = useState('');
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const pageSize = 15;
@@ -50,6 +54,8 @@ export default function TaskList() {
     setLoading(true);
     const params: Record<string, any> = { page, pageSize };
     if (stateFilter !== '全部状态') params.state = stateFilter;
+    const trimmed = searchId.trim();
+    if (trimmed) params.taskId = trimmed;
     getTasks(params)
       .then(({ data }) => {
         setTasks(data.data?.list || []);
@@ -72,6 +78,17 @@ export default function TaskList() {
         </div>
         
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+            <input
+              type="text"
+              value={searchId}
+              onChange={(e) => setSearchId(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { setPage(1); fetch(); } }}
+              placeholder="搜索 Task ID..."
+              className="pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-64"
+            />
+          </div>
           <div className="relative">
             <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
             <select
@@ -102,6 +119,7 @@ export default function TaskList() {
               <tr>
                 <th className="px-6 py-4">Task ID</th>
                 <th className="px-6 py-4">类型</th>
+                <th className="px-6 py-4">渠道</th>
                 <th className="px-6 py-4">模型名称</th>
                 <th className="px-6 py-4">状态</th>
                 <th className="px-6 py-4">创建时间</th>
@@ -130,6 +148,15 @@ export default function TaskList() {
                         t.taskType === 'app' ? 'bg-purple-50 text-purple-600 border border-purple-100' : 'bg-blue-50 text-blue-600 border border-blue-100'
                       }`}>
                         {t.taskType === 'app' ? 'APP' : 'MODEL'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        t.channel === 'economy'
+                          ? 'bg-green-50 text-green-700 border border-green-100'
+                          : 'bg-slate-100 text-slate-600 border border-slate-200'
+                      }`}>
+                        {t.channel === 'economy' ? '经济版' : '标准版'}
                       </span>
                     </td>
                     <td className="px-6 py-4 font-medium text-slate-700">

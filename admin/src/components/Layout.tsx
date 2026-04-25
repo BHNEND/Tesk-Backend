@@ -1,8 +1,9 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, ListTodo, Key, FileJson, Rocket, Cpu, Terminal, LogOut } from 'lucide-react';
+import { LayoutDashboard, BarChart3, ListTodo, Key, FileJson, Rocket, Cpu, Terminal, LogOut } from 'lucide-react';
 
 const links = [
   { to: '/', label: '仪表盘', icon: LayoutDashboard },
+  { to: '/analytics', label: '统计分析', icon: BarChart3 },
   { to: '/tasks', label: '任务管理', icon: ListTodo },
   { to: '/strategies', label: '策略管理', icon: Cpu },
   { to: '/test', label: '接口测试', icon: Terminal },
