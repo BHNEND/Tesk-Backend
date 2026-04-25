@@ -31,6 +31,9 @@ model TaskJob {
   completeTime        DateTime?
 
   @@index([state, createTime])
+  @@index([taskType, state, createTime])
+  @@index([taskType, channel, createTime])
+  @@index([state, failCode])
 }
 
 model ApiKey {

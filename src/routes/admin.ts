@@ -88,6 +88,12 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/v1/admin/stats", hidden, async (request, reply) => {
+    const cacheKey = "admin:stats";
+    const cached = await redis.get(cacheKey).catch(() => null);
+    if (cached) {
+      return reply.send(JSON.parse(cached));
+    }
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -116,7 +122,7 @@ export async function adminRoutes(app: FastifyInstance) {
       }),
     ]);
 
-    return reply.send({
+    const result = {
       code: 200,
       msg: "success",
       data: {
@@ -127,65 +133,59 @@ export async function adminRoutes(app: FastifyInstance) {
         todayFailed,
         avgCostTime: avgTime._avg.costTime ? Math.round(avgTime._avg.costTime) : 0,
       },
-    });
+    };
+
+    await redis.set(cacheKey, JSON.stringify(result), "EX", 30).catch(() => {});
+    return reply.send(result);
   });
 
   // === Analytics ===
 
   app.get<{ Querystring: { startDate?: string; endDate?: string } }>("/api/v1/admin/analytics", hidden, async (request, reply) => {
     const { startDate, endDate } = request.query;
+    const end = endDate ? new Date(endDate) : new Date();
+    const start = startDate ? new Date(startDate) : undefined;
+    const timeFilter = start ? `AND createTime >= '${start.toISOString().slice(0, 19)}'` : "";
+    const endTimeFilter = `AND createTime <= '${end.toISOString().slice(0, 19)}'`;
 
-    const where: any = {};
-    if (startDate || endDate) {
-      where.createTime = {};
-      if (startDate) where.createTime.gte = new Date(startDate);
-      if (endDate) where.createTime.lte = new Date(endDate);
+    // 1) 按 model + channel 聚合 total/success
+    const rows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT IFNULL(model, 'unknown') AS model, channel,
+             COUNT(*) AS total,
+             SUM(CASE WHEN state = 'SUCCESS' THEN 1 ELSE 0 END) AS success
+      FROM TaskJob
+      WHERE taskType = 'model' ${timeFilter} ${endTimeFilter}
+      GROUP BY model, channel
+    `);
+
+    // 2) 按 model + usedKeyIndex 聚合 standard 成功的 tier 分布
+    const tierRows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT IFNULL(model, 'unknown') AS model, usedKeyIndex AS usedKeyIndex, COUNT(*) AS cnt
+      FROM TaskJob
+      WHERE taskType = 'model' AND state = 'SUCCESS' AND channel = 'standard' AND usedKeyIndex IS NOT NULL
+        ${timeFilter} ${endTimeFilter}
+      GROUP BY model, usedKeyIndex
+    `);
+
+    // 组装
+    const byModel: Record<string, any> = {};
+    for (const r of rows) {
+      const model = String(r.model);
+      if (!byModel[model]) byModel[model] = { economy: { total: 0, success: 0 }, standard: { total: 0, success: 0, byTier: {} } };
+      const ch = r.channel === "economy" ? "economy" : "standard";
+      byModel[model][ch].total = Number(r.total);
+      byModel[model][ch].success = Number(r.success);
+    }
+    for (const r of tierRows) {
+      const model = String(r.model);
+      if (!byModel[model]) byModel[model] = { economy: { total: 0, success: 0 }, standard: { total: 0, success: 0, byTier: {} } };
+      byModel[model].standard.byTier[Number(r.usedKeyIndex)] = Number(r.cnt);
     }
 
-    const modelTasks = await prisma.taskJob.findMany({
-      where: { ...where, taskType: "model" },
-      select: { model: true, channel: true, state: true, usedKeyIndex: true },
-    });
-
-    // 按 model 分组
-    const byModel: Record<string, {
-      economy: { total: number; success: number },
-      standard: { total: number; success: number; byTier: Record<number, number> },
-    }> = {};
-
-    for (const t of modelTasks) {
-      const name = t.model || "unknown";
-      if (!byModel[name]) {
-        byModel[name] = {
-          economy: { total: 0, success: 0 },
-          standard: { total: 0, success: 0, byTier: {} },
-        };
-      }
-      const m = byModel[name];
-      if (t.channel === "economy") {
-        m.economy.total++;
-        if (t.state === "SUCCESS") m.economy.success++;
-      } else {
-        m.standard.total++;
-        if (t.state === "SUCCESS") {
-          m.standard.success++;
-          if (t.usedKeyIndex != null) {
-            m.standard.byTier[t.usedKeyIndex] = (m.standard.byTier[t.usedKeyIndex] || 0) + 1;
-          }
-        }
-      }
-    }
-
-    const data = Object.entries(byModel).map(([model, m]) => ({
+    const data = Object.entries(byModel).map(([model, m]: [string, any]) => ({
       model,
-      economy: {
-        ...m.economy,
-        successRate: m.economy.total > 0 ? Math.round(m.economy.success / m.economy.total * 10000) / 100 : null,
-      },
-      standard: {
-        ...m.standard,
-        successRate: m.standard.total > 0 ? Math.round(m.standard.success / m.standard.total * 10000) / 100 : null,
-      },
+      economy: { ...m.economy, successRate: m.economy.total > 0 ? Math.round(m.economy.success / m.economy.total * 10000) / 100 : null },
+      standard: { ...m.standard, successRate: m.standard.total > 0 ? Math.round(m.standard.success / m.standard.total * 10000) / 100 : null },
     }));
 
     return reply.send({ code: 200, msg: "success", data });
@@ -197,35 +197,30 @@ export async function adminRoutes(app: FastifyInstance) {
     const { startDate, endDate, interval } = request.query;
     const end = endDate ? new Date(endDate) : new Date();
     const start = startDate ? new Date(startDate) : new Date(end.getTime() - 24 * 3600 * 1000);
-    const intervalMinutes = interval === "day" ? 1440 : interval === "hour" ? 60 : 60;
+    const trunc = interval === "day" ? "%Y-%m-%d" : "%Y-%m-%d %H:00";
 
-    const tasks = await prisma.taskJob.findMany({
-      where: { createTime: { gte: start, lte: end } },
-      select: { createTime: true, state: true, costTime: true },
+    const rows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT DATE_FORMAT(createTime, '${trunc}') AS time,
+             COUNT(*) AS total,
+             SUM(CASE WHEN state = 'SUCCESS' THEN 1 ELSE 0 END) AS success,
+             SUM(CASE WHEN state = 'SUCCESS' AND costTime > 0 THEN costTime ELSE 0 END) AS totalTime
+      FROM TaskJob
+      WHERE createTime >= '${start.toISOString().slice(0, 19)}' AND createTime <= '${end.toISOString().slice(0, 19)}'
+      GROUP BY time ORDER BY time
+    `);
+
+    const data = rows.map((r: any) => {
+      const total = Number(r.total);
+      const success = Number(r.success);
+      const totalTime = Number(r.totalTime);
+      return {
+        time: String(r.time),
+        total,
+        success,
+        successRate: total > 0 ? Math.round(success / total * 10000) / 100 : null,
+        avgCostTime: success > 0 ? Math.round(totalTime / success) : null,
+      };
     });
-
-    // Group by interval
-    const buckets: Record<string, { total: number; success: number; totalTime: number }> = {};
-    for (const t of tasks) {
-      const d = new Date(t.createTime);
-      const key = interval === "day"
-        ? d.toISOString().slice(0, 10)
-        : `${d.toISOString().slice(0, 10)} ${String(d.getHours()).padStart(2, "0")}:00`;
-      if (!buckets[key]) buckets[key] = { total: 0, success: 0, totalTime: 0 };
-      buckets[key].total++;
-      if (t.state === "SUCCESS") {
-        buckets[key].success++;
-        buckets[key].totalTime += t.costTime || 0;
-      }
-    }
-
-    const data = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b)).map(([time, b]) => ({
-      time,
-      total: b.total,
-      success: b.success,
-      successRate: b.total > 0 ? Math.round(b.success / b.total * 10000) / 100 : null,
-      avgCostTime: b.success > 0 ? Math.round(b.totalTime / b.success) : null,
-    }));
 
     return reply.send({ code: 200, msg: "success", data });
   });
@@ -234,36 +229,31 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get<{ Querystring: { startDate?: string; endDate?: string } }>("/api/v1/admin/analytics/cost-by-tier", hidden, async (request, reply) => {
     const { startDate, endDate } = request.query;
-    const where: any = { state: "SUCCESS", costTime: { gt: 0 }, taskType: "model" };
-    if (startDate || endDate) {
-      where.createTime = {};
-      if (startDate) where.createTime.gte = new Date(startDate);
-      if (endDate) where.createTime.lte = new Date(endDate);
-    }
+    const end = endDate ? new Date(endDate) : new Date();
+    const start = startDate ? new Date(startDate) : new Date(end.getTime() - 24 * 3600 * 1000);
 
-    const tasks = await prisma.taskJob.findMany({
-      where,
-      select: { model: true, channel: true, usedKeyIndex: true, costTime: true },
-    });
+    const rows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT IFNULL(model, 'unknown') AS model, channel, usedKeyIndex AS usedKeyIndex,
+             COUNT(*) AS cnt, AVG(costTime) AS avgCostTime
+      FROM TaskJob
+      WHERE state = 'SUCCESS' AND costTime > 0 AND taskType = 'model'
+        AND createTime >= '${start.toISOString().slice(0, 19)}' AND createTime <= '${end.toISOString().slice(0, 19)}'
+      GROUP BY model, channel, usedKeyIndex
+    `);
 
-    // Group by model → tier
     const grouped: Record<string, Record<string, { total: number; totalTime: number }>> = {};
-    for (const t of tasks) {
-      const name = t.model || "unknown";
-      const tier = t.channel === "economy" ? "Economy" : `Key ${String.fromCharCode(65 + (t.usedKeyIndex ?? 0))}`;
-      if (!grouped[name]) grouped[name] = {};
-      if (!grouped[name][tier]) grouped[name][tier] = { total: 0, totalTime: 0 };
-      grouped[name][tier].total++;
-      grouped[name][tier].totalTime += t.costTime;
+    for (const r of rows) {
+      const model = String(r.model);
+      const tier = r.channel === "economy" ? "Economy" : `Key ${String.fromCharCode(65 + (Number(r.usedKeyIndex) || 0))}`;
+      if (!grouped[model]) grouped[model] = {};
+      if (!grouped[model][tier]) grouped[model][tier] = { total: 0, totalTime: 0 };
+      grouped[model][tier].total += Number(r.cnt);
+      grouped[model][tier].totalTime += Number(r.avgCostTime) * Number(r.cnt);
     }
 
     const data = Object.entries(grouped).map(([model, tiers]) => ({
       model,
-      tiers: Object.entries(tiers).map(([tier, t]) => ({
-        tier,
-        count: t.total,
-        avgCostTime: Math.round(t.totalTime / t.total),
-      })),
+      tiers: Object.entries(tiers).map(([tier, t]) => ({ tier, count: t.total, avgCostTime: Math.round(t.totalTime / t.total) })),
     }));
 
     return reply.send({ code: 200, msg: "success", data });
@@ -276,30 +266,26 @@ export async function adminRoutes(app: FastifyInstance) {
     const end = endDate ? new Date(endDate) : new Date();
     const start = startDate ? new Date(startDate) : new Date(end.getTime() - 24 * 3600 * 1000);
 
-    const tasks = await prisma.taskJob.findMany({
-      where: { createTime: { gte: start, lte: end }, state: "SUCCESS", costTime: { gt: 0 }, taskType: "model" },
-      select: { model: true, costTime: true, createTime: true },
-    });
+    const rows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT DATE_FORMAT(createTime, '%Y-%m-%d %H:00') AS time,
+             IFNULL(model, 'unknown') AS model,
+             AVG(costTime / 1000) AS avgCostTimeSec
+      FROM TaskJob
+      WHERE createTime >= '${start.toISOString().slice(0, 19)}' AND createTime <= '${end.toISOString().slice(0, 19)}'
+        AND state = 'SUCCESS' AND costTime > 0 AND taskType = 'model'
+      GROUP BY time, model ORDER BY time
+    `);
 
-    // Group by hour → model
-    const buckets: Record<string, Record<string, { total: number; totalTime: number }>> = {};
-    for (const t of tasks) {
-      const d = new Date(t.createTime);
-      const key = `${d.toISOString().slice(0, 10)} ${String(d.getHours()).padStart(2, "0")}:00`;
-      const model = t.model || "unknown";
-      if (!buckets[key]) buckets[key] = {};
-      if (!buckets[key][model]) buckets[key][model] = { total: 0, totalTime: 0 };
-      buckets[key][model].total++;
-      buckets[key][model].totalTime += t.costTime;
+    // pivot
+    const buckets: Record<string, Record<string, number>> = {};
+    for (const r of rows) {
+      const time = String(r.time);
+      const model = String(r.model);
+      if (!buckets[time]) buckets[time] = {};
+      buckets[time][model] = Math.round(Number(r.avgCostTimeSec) * 10) / 10;
     }
 
-    const data = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b)).map(([time, models]) => {
-      const entry: any = { time };
-      for (const [model, t] of Object.entries(models)) {
-        entry[model] = Math.round(t.totalTime / t.total / 100) / 10; // seconds, 1 decimal
-      }
-      return entry;
-    });
+    const data = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b)).map(([time, models]) => ({ time, ...models }));
 
     return reply.send({ code: 200, msg: "success", data });
   });
@@ -308,79 +294,50 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get<{ Querystring: { startDate?: string; endDate?: string } }>("/api/v1/admin/analytics/errors", hidden, async (request, reply) => {
     const { startDate, endDate } = request.query;
-    const where: any = { state: "FAILED" };
-    if (startDate || endDate) {
-      where.createTime = {};
-      if (startDate) where.createTime.gte = new Date(startDate);
-      if (endDate) where.createTime.lte = new Date(endDate);
-    }
+    const end = endDate ? new Date(endDate) : new Date();
+    const start = startDate ? new Date(startDate) : undefined;
+    const timeFilter = start ? `AND createTime >= '${start.toISOString().slice(0, 19)}'` : "";
+    const endTimeFilter = `AND createTime <= '${end.toISOString().slice(0, 19)}'`;
 
-    const tasks = await prisma.taskJob.findMany({
-      where,
-      select: { failCode: true, model: true, appid: true },
-    });
+    const [codeRows, modelRows] = await Promise.all([
+      prisma.$queryRawUnsafe(`SELECT IFNULL(failCode, 'UNKNOWN') AS code, COUNT(*) AS cnt FROM TaskJob WHERE state = 'FAILED' ${timeFilter} ${endTimeFilter} GROUP BY code`) as Promise<any[]>,
+      prisma.$queryRawUnsafe(`SELECT IFNULL(model, IFNULL(appid, 'unknown')) AS name, IFNULL(failCode, 'UNKNOWN') AS code, COUNT(*) AS cnt FROM TaskJob WHERE state = 'FAILED' ${timeFilter} ${endTimeFilter} GROUP BY name, code`) as Promise<any[]>,
+    ]);
 
-    // By failCode
     const byCode: Record<string, number> = {};
+    for (const r of codeRows) byCode[String(r.code)] = Number(r.cnt);
+
     const byModel: Record<string, Record<string, number>> = {};
-    for (const t of tasks) {
-      const code = t.failCode || "UNKNOWN";
-      byCode[code] = (byCode[code] || 0) + 1;
-      const name = t.model || t.appid || "unknown";
+    for (const r of modelRows) {
+      const name = String(r.name);
+      const code = String(r.code);
       if (!byModel[name]) byModel[name] = {};
-      byModel[name][code] = (byModel[name][code] || 0) + 1;
+      byModel[name][code] = Number(r.cnt);
     }
 
-    return reply.send({
-      code: 200,
-      msg: "success",
-      data: {
-        total: tasks.length,
-        byCode,
-        byModel,
-      },
-    });
+    return reply.send({ code: 200, msg: "success", data: { total: Object.values(byCode).reduce((a, b) => a + b, 0), byCode, byModel } });
   });
 
   // === Analytics: Performance ===
 
   app.get<{ Querystring: { startDate?: string; endDate?: string } }>("/api/v1/admin/analytics/performance", hidden, async (request, reply) => {
     const { startDate, endDate } = request.query;
-    const where: any = { state: "SUCCESS", costTime: { gt: 0 } };
-    if (startDate || endDate) {
-      where.createTime = {};
-      if (startDate) where.createTime.gte = new Date(startDate);
-      if (endDate) where.createTime.lte = new Date(endDate);
-    }
+    const end = endDate ? new Date(endDate) : new Date();
+    const start = startDate ? new Date(startDate) : undefined;
+    const timeFilter = start ? `AND createTime >= '${start.toISOString().slice(0, 19)}'` : "";
+    const endTimeFilter = `AND createTime <= '${end.toISOString().slice(0, 19)}'`;
 
-    const tasks = await prisma.taskJob.findMany({
-      where,
-      select: { model: true, appid: true, costTime: true },
-    });
+    const rows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT IFNULL(model, IFNULL(appid, 'unknown')) AS model,
+             COUNT(*) AS cnt, AVG(costTime) AS avg_time
+      FROM TaskJob WHERE state = 'SUCCESS' AND costTime > 0 ${timeFilter} ${endTimeFilter}
+      GROUP BY model
+    `);
 
-    // Group by model
-    const grouped: Record<string, number[]> = {};
-    for (const t of tasks) {
-      const name = t.model || t.appid || "unknown";
-      if (!grouped[name]) grouped[name] = [];
-      grouped[name].push(t.costTime);
-    }
-
-    const percentile = (arr: number[], p: number) => {
-      if (arr.length === 0) return 0;
-      const sorted = [...arr].sort((a, b) => a - b);
-      const idx = Math.ceil(p / 100 * sorted.length) - 1;
-      return sorted[Math.max(0, idx)];
-    };
-
-    const data = Object.entries(grouped).map(([model, times]) => ({
-      model,
-      count: times.length,
-      avg: Math.round(times.reduce((a, b) => a + b, 0) / times.length),
-      p50: percentile(times, 50),
-      p90: percentile(times, 90),
-      p95: percentile(times, 95),
-      p99: percentile(times, 99),
+    const data = rows.map((r: any) => ({
+      model: String(r.model),
+      count: Number(r.cnt),
+      avg: Math.round(Number(r.avg_time)),
     }));
 
     return reply.send({ code: 200, msg: "success", data });
@@ -408,36 +365,31 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get<{ Querystring: { startDate?: string; endDate?: string } }>("/api/v1/admin/analytics/apps", hidden, async (request, reply) => {
     const { startDate, endDate } = request.query;
-    const where: any = { taskType: "app" };
-    if (startDate || endDate) {
-      where.createTime = {};
-      if (startDate) where.createTime.gte = new Date(startDate);
-      if (endDate) where.createTime.lte = new Date(endDate);
-    }
+    const end = endDate ? new Date(endDate) : new Date();
+    const start = startDate ? new Date(startDate) : undefined;
+    const timeFilter = start ? `AND createTime >= '${start.toISOString().slice(0, 19)}'` : "";
+    const endTimeFilter = `AND createTime <= '${end.toISOString().slice(0, 19)}'`;
 
-    const tasks = await prisma.taskJob.findMany({
-      where,
-      select: { appid: true, state: true, costTime: true },
+    const rows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT IFNULL(appid, 'unknown') AS app,
+             COUNT(*) AS total,
+             SUM(CASE WHEN state = 'SUCCESS' THEN 1 ELSE 0 END) AS success,
+             SUM(CASE WHEN state = 'SUCCESS' AND costTime > 0 THEN costTime ELSE 0 END) AS totalTime
+      FROM TaskJob WHERE taskType = 'app' ${timeFilter} ${endTimeFilter}
+      GROUP BY app
+    `);
+
+    const data = rows.map((r: any) => {
+      const total = Number(r.total);
+      const success = Number(r.success);
+      return {
+        app: String(r.app),
+        total,
+        success,
+        successRate: total > 0 ? Math.round(success / total * 10000) / 100 : null,
+        avgCostTime: success > 0 ? Math.round(Number(r.totalTime) / success) : null,
+      };
     });
-
-    const grouped: Record<string, { total: number; success: number; totalTime: number }> = {};
-    for (const t of tasks) {
-      const name = t.appid || "unknown";
-      if (!grouped[name]) grouped[name] = { total: 0, success: 0, totalTime: 0 };
-      grouped[name].total++;
-      if (t.state === "SUCCESS") {
-        grouped[name].success++;
-        grouped[name].totalTime += t.costTime || 0;
-      }
-    }
-
-    const data = Object.entries(grouped).map(([app, g]) => ({
-      app,
-      total: g.total,
-      success: g.success,
-      successRate: g.total > 0 ? Math.round(g.success / g.total * 10000) / 100 : null,
-      avgCostTime: g.success > 0 ? Math.round(g.totalTime / g.success) : null,
-    }));
 
     return reply.send({ code: 200, msg: "success", data });
   });
@@ -446,33 +398,31 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get<{ Querystring: { startDate?: string; endDate?: string } }>("/api/v1/admin/analytics/duration", hidden, async (request, reply) => {
     const { startDate, endDate } = request.query;
-    const where: any = { state: "SUCCESS", costTime: { gt: 0 } };
-    if (startDate || endDate) {
-      where.createTime = {};
-      if (startDate) where.createTime.gte = new Date(startDate);
-      if (endDate) where.createTime.lte = new Date(endDate);
-    }
+    const end = endDate ? new Date(endDate) : new Date();
+    const start = startDate ? new Date(startDate) : undefined;
+    const timeFilter = start ? `AND createTime >= '${start.toISOString().slice(0, 19)}'` : "";
+    const endTimeFilter = `AND createTime <= '${end.toISOString().slice(0, 19)}'`;
 
-    const tasks = await prisma.taskJob.findMany({
-      where,
-      select: { costTime: true },
-    });
+    const rows: any[] = await prisma.$queryRawUnsafe(`
+      SELECT
+        SUM(CASE WHEN costTime < 5000 THEN 1 ELSE 0 END) AS b1,
+        SUM(CASE WHEN costTime >= 5000 AND costTime < 15000 THEN 1 ELSE 0 END) AS b2,
+        SUM(CASE WHEN costTime >= 15000 AND costTime < 30000 THEN 1 ELSE 0 END) AS b3,
+        SUM(CASE WHEN costTime >= 30000 AND costTime < 60000 THEN 1 ELSE 0 END) AS b4,
+        SUM(CASE WHEN costTime >= 60000 AND costTime < 300000 THEN 1 ELSE 0 END) AS b5,
+        SUM(CASE WHEN costTime >= 300000 THEN 1 ELSE 0 END) AS b6
+      FROM TaskJob WHERE state = 'SUCCESS' AND costTime > 0 ${timeFilter} ${endTimeFilter}
+    `);
 
-    const buckets = [
-      { label: "<5s", max: 5000 },
-      { label: "5-15s", max: 15000 },
-      { label: "15-30s", max: 30000 },
-      { label: "30-60s", max: 60000 },
-      { label: "1-5min", max: 300000 },
-      { label: ">5min", max: Infinity },
+    const r = rows[0] || {};
+    const data = [
+      { label: "<5s", count: Number(r.b1 || 0) },
+      { label: "5-15s", count: Number(r.b2 || 0) },
+      { label: "15-30s", count: Number(r.b3 || 0) },
+      { label: "30-60s", count: Number(r.b4 || 0) },
+      { label: "1-5min", count: Number(r.b5 || 0) },
+      { label: ">5min", count: Number(r.b6 || 0) },
     ];
-
-    let prev = 0;
-    const data = buckets.map((b, i) => {
-      const count = tasks.filter(t => t.costTime >= prev && t.costTime < b.max).length;
-      prev = b.max;
-      return { label: b.label, count };
-    });
 
     return reply.send({ code: 200, msg: "success", data });
   });
@@ -485,27 +435,25 @@ export async function adminRoutes(app: FastifyInstance) {
 
     const end = endDate ? new Date(endDate) : new Date();
     const start = startDate ? new Date(startDate) : new Date(end.getTime() - 24 * 3600 * 1000);
+    const escapedModel = model.replace(/'/g, "\\'");
 
-    // Timeline by channel
-    const tasks = await prisma.taskJob.findMany({
-      where: { model, taskType: "model", createTime: { gte: start, lte: end } },
-      select: { channel: true, state: true, costTime: true, createTime: true },
-    });
+    const [tlRows, errRows] = await Promise.all([
+      prisma.$queryRawUnsafe(`SELECT DATE_FORMAT(createTime, '%Y-%m-%d %H:00') AS time, channel, COUNT(*) AS total, SUM(CASE WHEN state = 'SUCCESS' THEN 1 ELSE 0 END) AS success, SUM(CASE WHEN state = 'SUCCESS' AND costTime > 0 THEN costTime ELSE 0 END) AS totalTime FROM TaskJob WHERE model = '${escapedModel}' AND taskType = 'model' AND createTime >= '${start.toISOString().slice(0, 19)}' AND createTime <= '${end.toISOString().slice(0, 19)}' GROUP BY time, channel ORDER BY time`) as Promise<any[]>,
+      prisma.$queryRawUnsafe(`SELECT channel, IFNULL(failCode, 'UNKNOWN') AS code, COUNT(*) AS cnt FROM TaskJob WHERE model = '${escapedModel}' AND taskType = 'model' AND state = 'FAILED' AND createTime >= '${start.toISOString().slice(0, 19)}' AND createTime <= '${end.toISOString().slice(0, 19)}' GROUP BY channel, code`) as Promise<any[]>,
+    ]);
 
-    const buckets: Record<string, { economy: { total: number; success: number; totalTime: number }; standard: { total: number; success: number; totalTime: number } }> = {};
-    for (const t of tasks) {
-      const d = new Date(t.createTime);
-      const key = `${d.toISOString().slice(0, 10)} ${String(d.getHours()).padStart(2, "0")}:00`;
-      if (!buckets[key]) buckets[key] = { economy: { total: 0, success: 0, totalTime: 0 }, standard: { total: 0, success: 0, totalTime: 0 } };
-      const ch = t.channel === "economy" ? "economy" : "standard";
-      buckets[key][ch].total++;
-      if (t.state === "SUCCESS") {
-        buckets[key][ch].success++;
-        buckets[key][ch].totalTime += t.costTime || 0;
-      }
+    // Assemble timeline
+    const timeBuckets: Record<string, { economy: { total: number; success: number; totalTime: number }; standard: { total: number; success: number; totalTime: number } }> = {};
+    for (const r of tlRows) {
+      const time = String(r.time);
+      if (!timeBuckets[time]) timeBuckets[time] = { economy: { total: 0, success: 0, totalTime: 0 }, standard: { total: 0, success: 0, totalTime: 0 } };
+      const ch = r.channel === "economy" ? "economy" : "standard";
+      timeBuckets[time][ch].total = Number(r.total);
+      timeBuckets[time][ch].success = Number(r.success);
+      timeBuckets[time][ch].totalTime = Number(r.totalTime);
     }
 
-    const timeline = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b)).map(([time, ch]) => ({
+    const timeline = Object.entries(timeBuckets).sort(([a], [b]) => a.localeCompare(b)).map(([time, ch]) => ({
       time,
       economy: {
         total: ch.economy.total,
@@ -519,25 +467,22 @@ export async function adminRoutes(app: FastifyInstance) {
       },
     }));
 
-    // Errors
-    const failedTasks = await prisma.taskJob.findMany({
-      where: { model, taskType: "model", state: "FAILED", createTime: { gte: start, lte: end } },
-      select: { failCode: true, channel: true },
-    });
-
+    // Assemble errors
     const errorsByCode: Record<string, number> = {};
-    const errorsByChannel: Record<string, Record<string, number>> = {};
-    for (const t of failedTasks) {
-      const code = t.failCode || "UNKNOWN";
-      errorsByCode[code] = (errorsByCode[code] || 0) + 1;
-      const ch = t.channel === "economy" ? "economy" : "standard";
-      if (!errorsByChannel[ch]) errorsByChannel[ch] = {};
-      errorsByChannel[ch][code] = (errorsByChannel[ch][code] || 0) + 1;
+    const errorsByChannel: Record<string, Record<string, number>> = { economy: {}, standard: {} };
+    let errorTotal = 0;
+    for (const r of errRows) {
+      const code = String(r.code);
+      const ch = r.channel === "economy" ? "economy" : "standard";
+      const cnt = Number(r.cnt);
+      errorsByCode[code] = (errorsByCode[code] || 0) + cnt;
+      errorsByChannel[ch][code] = (errorsByChannel[ch][code] || 0) + cnt;
+      errorTotal += cnt;
     }
 
     return reply.send({
       code: 200, msg: "success",
-      data: { timeline, errors: { total: failedTasks.length, byCode: errorsByCode, byChannel: errorsByChannel } },
+      data: { timeline, errors: { total: errorTotal, byCode: errorsByCode, byChannel: errorsByChannel } },
     });
   });
 
