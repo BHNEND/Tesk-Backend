@@ -89,10 +89,10 @@ export async function createTask(body: CreateTaskBody, apiKeyData?: ApiKey) {
     callBackUrl: body.callBackUrl,
     input: body.input,
   }, {
-    attempts: isApp ? 5 : (isEconomy ? 1 : 3),
+    attempts: isApp ? 5 : 1,
     backoff: isApp
       ? { type: 'fixed', delay: 3000 }
-      : { type: 'exponential', delay: 5000 },
+      : undefined,
   });
 
   return { taskId };
