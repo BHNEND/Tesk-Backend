@@ -26,6 +26,9 @@ model TaskJob {
   failCode            String?  @db.VarChar(50)
   failMsg             String?  @db.Text
   costTime            Int      @default(0)
+  webhookStatus       String   @default("pending") @db.VarChar(20) // pending/delivered/failed
+  webhookAttempts     Int      @default(0)
+  webhookLastTime     DateTime?
   createTime          DateTime @default(now())
   updateTime          DateTime @updatedAt
   completeTime        DateTime?

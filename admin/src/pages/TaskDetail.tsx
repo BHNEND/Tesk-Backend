@@ -3,6 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getTask } from '../api';
 import StatusBadge from '../components/StatusBadge';
 
+const WEBHOOK_STATUS_MAP: Record<string, { label: string; cls: string }> = {
+  pending: { label: '待回调', cls: 'bg-yellow-50 text-yellow-700 border-yellow-100' },
+  delivered: { label: '已送达', cls: 'bg-green-50 text-green-700 border-green-100' },
+  failed: { label: '送达失败', cls: 'bg-red-50 text-red-700 border-red-100' },
+};
+
 export default function TaskDetail() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
@@ -41,6 +47,9 @@ export default function TaskDetail() {
     ['原始错误 (内部排查)', 'rawError'],
   ];
 
+  const webhookStatus = String(task.webhookStatus || 'pending');
+  const webhookInfo = WEBHOOK_STATUS_MAP[webhookStatus] || { label: webhookStatus, cls: 'bg-gray-50 text-gray-600 border-gray-100' };
+
   return (
     <div>
       <button
@@ -73,6 +82,23 @@ export default function TaskDetail() {
             </span>
           </div>
         ))}
+
+        {/* Webhook Status */}
+        <div className="flex flex-col sm:flex-row sm:items-start gap-1 border-t border-slate-100 pt-4">
+          <span className="text-sm text-gray-500 w-28 shrink-0">回调状态</span>
+          <div className="flex items-center gap-3">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold border ${webhookInfo.cls}`}>
+              {webhookInfo.label}
+            </span>
+            {task.webhookAttempts != null && Number(task.webhookAttempts) > 0 && (
+              <span className="text-xs text-slate-400">
+                尝试 {String(task.webhookAttempts)} 次
+                {task.webhookLastTime ? ` · ${new Date(String(task.webhookLastTime)).toLocaleString()}` : ''}
+              </span>
+            )}
+          </div>
+        </div>
+
         {jsonFields.map(([label, key]) => {
           const val = task[key];
           if (!val) return null;

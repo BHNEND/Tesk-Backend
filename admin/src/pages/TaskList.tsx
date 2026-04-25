@@ -15,6 +15,7 @@ interface Task {
   createTime: string;
   completeTime: string | null;
   costTime: number | null;
+  webhookStatus?: string;
 }
 
 const states = ['全部状态', 'PENDING', 'RUNNING', 'SUCCESS', 'FAILED'];
@@ -122,6 +123,7 @@ export default function TaskList() {
                 <th className="px-6 py-4">渠道</th>
                 <th className="px-6 py-4">模型名称</th>
                 <th className="px-6 py-4">状态</th>
+                <th className="px-6 py-4">回调</th>
                 <th className="px-6 py-4">创建时间</th>
                 <th className="px-6 py-4">耗时</th>
                 <th className="px-6 py-4 text-right">操作</th>
@@ -164,6 +166,17 @@ export default function TaskList() {
                     </td>
                     <td className="px-6 py-4">
                       <StatusBadge state={t.state} />
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
+                        t.webhookStatus === 'delivered'
+                          ? 'bg-green-50 text-green-700 border-green-100'
+                          : t.webhookStatus === 'failed'
+                          ? 'bg-red-50 text-red-700 border-red-100'
+                          : 'bg-yellow-50 text-yellow-700 border-yellow-100'
+                      }`}>
+                        {t.webhookStatus === 'delivered' ? '已送达' : t.webhookStatus === 'failed' ? '失败' : '待回调'}
+                      </span>
                     </td>
                     <td className="px-6 py-4 text-slate-500 text-xs">
                       {new Date(t.createTime).toLocaleString()}
