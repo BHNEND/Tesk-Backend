@@ -40,7 +40,11 @@ function ModelDetailCharts({ model, range }: { model: string; range: TimeRange }
     setLoading(true);
     const params: any = { model };
     if (range.startDate) { const s = new Date(range.startDate); params.startDate = s.toISOString(); }
-    if (range.endDate) { const e = new Date(range.endDate); e.setHours(23, 59, 59, 999); params.endDate = e.toISOString(); }
+    if (range.endDate) {
+      const e = new Date(range.endDate);
+      if (range.endDate.length <= 10) e.setHours(23, 59, 59, 999);
+      params.endDate = e.toISOString();
+    }
     getAnalyticsModelDetail(params)
       .then(res => setData(res.data?.data))
       .catch(console.error)
@@ -115,9 +119,8 @@ function ModelDetailCharts({ model, range }: { model: string; range: TimeRange }
 
 export default function Analytics() {
   const [range, setRange] = useState<TimeRange>(() => {
-    const end = new Date();
-    const start = new Date(end.getTime() - 24 * 3600 * 1000);
-    return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+    const today = new Date().toISOString().slice(0, 10);
+    return { startDate: today, endDate: today };
   });
   const [loading, setLoading] = useState(true);
   const [modelData, setModelData] = useState<any[]>([]);
@@ -129,7 +132,12 @@ export default function Analytics() {
     const q = r || range;
     const params: any = {};
     if (q.startDate) { const s = new Date(q.startDate); params.startDate = s.toISOString(); }
-    if (q.endDate) { const e = new Date(q.endDate); e.setHours(23, 59, 59, 999); params.endDate = e.toISOString(); }
+    if (q.endDate) {
+      const e = new Date(q.endDate);
+      // 仅日期格式（YYYY-MM-DD）自动补到当天末尾，完整时间戳保持原值
+      if (q.endDate.length <= 10) e.setHours(23, 59, 59, 999);
+      params.endDate = e.toISOString();
+    }
 
     setLoading(true);
     Promise.all([getAnalytics(params), getAnalyticsApps(params)])
@@ -144,7 +152,7 @@ export default function Analytics() {
   useEffect(() => { fetchAll(); }, []);
 
   const handleQuickPick = (start: Date, end: Date) => {
-    const r = { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+    const r = { startDate: start.toISOString(), endDate: end.toISOString() };
     setRange(r);
     fetchAll(r);
   };
@@ -159,10 +167,10 @@ export default function Analytics() {
         <div className="flex flex-wrap items-center gap-2">
           <QuickFilters onPick={handleQuickPick} />
           <span className="text-slate-300 mx-1">|</span>
-          <input type="date" value={range.startDate} onChange={e => setRange({ ...range, startDate: e.target.value })}
+          <input type="date" value={range.startDate.slice(0, 10)} onChange={e => setRange({ ...range, startDate: e.target.value })}
             className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
           <span className="text-slate-400 text-sm">至</span>
-          <input type="date" value={range.endDate} onChange={e => setRange({ ...range, endDate: e.target.value })}
+          <input type="date" value={range.endDate.slice(0, 10)} onChange={e => setRange({ ...range, endDate: e.target.value })}
             className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
           <button onClick={() => fetchAll()} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">查询</button>
         </div>
